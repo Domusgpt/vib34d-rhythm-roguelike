@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VIB34D Demo - Basic System Check</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <style>
         body {
             margin: 0;
@@ -108,46 +109,63 @@
             }
         }
 
+        let animationRunning = false;
+
         function testBasicVisualization() {
             const canvas = document.getElementById('test-canvas');
             const ctx = canvas.getContext('2d');
             const output = document.getElementById('output');
 
-            // Simple visualization test
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = '#000020';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Draw rotating geometry
-            const centerX = canvas.width / 2;
-            const centerY = canvas.height / 2;
-            const time = Date.now() * 0.001;
-
-            // 4D projection simulation
-            for (let i = 0; i < 8; i++) {
-                const angle = (i / 8) * Math.PI * 2 + time;
-                const radius = 50 + 30 * Math.sin(time * 0.5);
-
-                const x = centerX + Math.cos(angle) * radius;
-                const y = centerY + Math.sin(angle) * radius;
-
-                ctx.beginPath();
-                ctx.arc(x, y, 5, 0, Math.PI * 2);
-                ctx.fillStyle = `hsl(${i * 45 + time * 50}, 80%, 60%)`;
-                ctx.fill();
-
-                // Connect to center
-                ctx.beginPath();
-                ctx.moveTo(centerX, centerY);
-                ctx.lineTo(x, y);
-                ctx.strokeStyle = `hsl(${i * 45 + time * 50}, 50%, 40%)`;
-                ctx.stroke();
+            if (animationRunning) {
+                output.innerHTML = '<div class="success">✅ Visualization test already running</div>';
+                return;
             }
 
-            output.innerHTML = '<div class="success">✅ Basic visualization test passed</div>';
+            animationRunning = true;
+            output.innerHTML = '<div class="success">✅ Starting visualization test...</div>';
 
-            // Continue animation
-            requestAnimationFrame(testBasicVisualization);
+            function animate() {
+                if (!animationRunning) return;
+
+                // Simple visualization test
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#000020';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Draw rotating geometry
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
+                const time = Date.now() * 0.001;
+
+                // 4D projection simulation
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2 + time;
+                    const radius = 50 + 30 * Math.sin(time * 0.5);
+
+                    const x = centerX + Math.cos(angle) * radius;
+                    const y = centerY + Math.sin(angle) * radius;
+
+                    ctx.beginPath();
+                    ctx.arc(x, y, 5, 0, Math.PI * 2);
+                    ctx.fillStyle = `hsl(${i * 45 + time * 50}, 80%, 60%)`;
+                    ctx.fill();
+
+                    // Connect to center
+                    ctx.beginPath();
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(x, y);
+                    ctx.strokeStyle = `hsl(${i * 45 + time * 50}, 50%, 40%)`;
+                    ctx.stroke();
+                }
+
+                requestAnimationFrame(animate);
+            }
+
+            animate();
+
+            setTimeout(() => {
+                output.innerHTML = '<div class="success">✅ Visualization test complete - 4D geometry animation running</div>';
+            }, 1000);
         }
 
         function testAudioContext() {

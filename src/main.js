@@ -353,9 +353,4 @@ class VIB34DRhythmGame {
     }
 }
 
-// Initialize the game when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    window.game = new VIB34DRhythmGame();
-});
-
 export { VIB34DRhythmGame };
