@@ -50,6 +50,44 @@ export class AudioService {
         this.resetState();
     }
 
+    async initializeMicrophone() {
+        await this.init();
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false
+                }
+            });
+
+            this.microphoneSource = this.context.createMediaStreamSource(stream);
+            this.microphoneSource.connect(this.analyser);
+            this.isPlaying = true;
+
+            console.log('Microphone initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize microphone:', error);
+            throw new Error('Microphone access denied or not available');
+        }
+    }
+
+    async loadFile(file) {
+        await this.init();
+        this.stop();
+
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            this.trackBuffer = await this.context.decodeAudioData(arrayBuffer);
+            this.resetState();
+            console.log('Audio file loaded successfully');
+        } catch (error) {
+            console.error('Failed to load audio file:', error);
+            throw new Error('Invalid audio file format');
+        }
+    }
+
     resetState() {
         this.isPlaying = false;
         this.startTime = 0;

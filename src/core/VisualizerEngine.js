@@ -96,26 +96,50 @@ export class VisualizerEngine {
         const canvas = this.canvas;
         const gl = this.gl;
 
-        switch (systemName) {
-            case 'faceted':
-                this.systems.faceted = new FacetedEngine();
-                await this.systems.faceted.initialize(canvas);
-                break;
+        try {
+            switch (systemName) {
+                case 'faceted':
+                    this.systems.faceted = new FacetedEngine();
+                    if (typeof this.systems.faceted.initialize === 'function') {
+                        await this.systems.faceted.initialize(canvas);
+                    }
+                    break;
 
-            case 'quantum':
-                this.systems.quantum = new QuantumEngine();
-                await this.systems.quantum.initialize(canvas);
-                break;
+                case 'quantum':
+                    this.systems.quantum = new QuantumEngine();
+                    if (typeof this.systems.quantum.initialize === 'function') {
+                        await this.systems.quantum.initialize(canvas);
+                    }
+                    break;
 
-            case 'holographic':
-                this.systems.holographic = new HolographicEngine();
-                await this.systems.holographic.initialize(canvas);
-                break;
+                case 'holographic':
+                    this.systems.holographic = new HolographicEngine();
+                    if (typeof this.systems.holographic.initialize === 'function') {
+                        await this.systems.holographic.initialize(canvas);
+                    }
+                    break;
 
-            case 'polychora':
-                this.systems.polychora = new PolychoraSystem();
-                await this.systems.polychora.initialize(canvas);
-                break;
+                case 'polychora':
+                    this.systems.polychora = new PolychoraSystem();
+                    if (typeof this.systems.polychora.initialize === 'function') {
+                        await this.systems.polychora.initialize(canvas);
+                    }
+                    break;
+            }
+        } catch (error) {
+            console.warn(`Failed to initialize ${systemName} system, using fallback:`, error);
+            // Create a minimal fallback system
+            this.systems[systemName] = {
+                render: () => {
+                    // Simple fallback rendering
+                    if (this.gl) {
+                        this.gl.clearColor(0.0, 0.0, 0.2, 1.0);
+                        this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+                    }
+                },
+                setParameters: () => {},
+                cleanup: () => {}
+            };
         }
     }
 
