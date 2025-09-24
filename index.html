@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIB34D Rhythm Roguelike</title>
+    <link rel="stylesheet" href="styles/game.css">
+</head>
+<body>
+    <div id="game-container">
+        <!-- Main Game Canvas -->
+        <canvas id="game-canvas"></canvas>
+
+        <!-- HUD Overlay -->
+        <div id="hud">
+            <div class="hud-top">
+                <div class="hud-score">
+                    <span class="label">SCORE</span>
+                    <span class="value" id="score">0</span>
+                </div>
+                <div class="hud-combo">
+                    <span class="label">COMBO</span>
+                    <span class="value" id="combo">0x</span>
+                </div>
+                <div class="hud-level">
+                    <span class="label">LEVEL</span>
+                    <span class="value" id="level">1-1</span>
+                </div>
+            </div>
+
+            <div class="hud-center">
+                <div class="geometry-indicator" id="geometry-display">HYPERCUBE</div>
+                <div class="dimension-meter" id="dimension-meter">
+                    <span class="label">4D</span>
+                    <div class="meter-fill"></div>
+                </div>
+            </div>
+
+            <div class="hud-bottom">
+                <div class="health-bar">
+                    <div class="health-fill" id="health"></div>
+                </div>
+                <div class="pulse-meter">
+                    <div class="pulse-fill" id="pulse"></div>
+                </div>
+                <div class="chaos-indicator">
+                    <span class="label">CHAOS</span>
+                    <div class="chaos-level" id="chaos"></div>
+                </div>
+            </div>
+
+            <!-- Audio Visualizer -->
+            <div class="audio-bands">
+                <div class="band bass" id="bass-band"></div>
+                <div class="band mid" id="mid-band"></div>
+                <div class="band high" id="high-band"></div>
+            </div>
+        </div>
+
+        <!-- Start Screen -->
+        <div id="start-screen" class="overlay active">
+            <h1>VIB34D RHYTHM ROGUELIKE</h1>
+            <p>Navigate 4D geometric challenges synchronized to your music</p>
+
+            <div class="audio-source-select">
+                <h3>Select Audio Source</h3>
+                <button class="source-btn" data-source="mic">🎤 Microphone</button>
+                <button class="source-btn" data-source="file">📁 Audio File</button>
+                <button class="source-btn" data-source="stream">🎵 Stream URL</button>
+            </div>
+
+            <input type="file" id="audio-file" accept="audio/*" style="display:none">
+            <input type="text" id="stream-url" placeholder="Enter stream URL..." style="display:none">
+
+            <button id="start-game" class="primary-btn" disabled>START GAME</button>
+        </div>
+
+        <!-- Pause Menu -->
+        <div id="pause-menu" class="overlay">
+            <h2>PAUSED</h2>
+            <button id="resume">Resume</button>
+            <button id="restart">Restart Level</button>
+            <button id="quit">Quit to Menu</button>
+        </div>
+    </div>
+
+    <!-- Game Modules -->
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>
