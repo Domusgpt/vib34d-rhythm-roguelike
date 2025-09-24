@@ -12,7 +12,7 @@ export class AudioService {
         this.fftSize = 2048;
         this.frequencyData = null;
         this.timeDomainData = null;
-        this.listeners = { beat: new Set(), analyser: new Set() };
+        this.listeners = { beat: new Set(), analyser: new Set(), error: new Set() };
         this.lastBeatTime = 0;
         this.bpm = DEFAULT_BPM;
         this.metronomePhase = 0;
@@ -20,6 +20,11 @@ export class AudioService {
         this.energyHistory = [];
         this.historySize = 43; // ~0.7 seconds at 60fps
         this.metronomeEnabled = true;
+        this.sourceType = 'buffer';
+        this.streamNode = null;
+        this.mediaStream = null;
+        this.mediaElement = null;
+        this.mediaElementSource = null;
     }
 
     async init() {
@@ -39,14 +44,171 @@ export class AudioService {
     async loadTrack(url) {
         await this.init();
         this.stop();
-        const response = await fetch(url);
-        const arrayBuffer = await response.arrayBuffer();
-        this.trackBuffer = await this.context.decodeAudioData(arrayBuffer);
-        this.resetState();
+        this.detachMediaElement();
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Network error (${response.status})`);
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            this.trackBuffer = await this.context.decodeAudioData(arrayBuffer);
+            this.sourceType = 'buffer';
+            this.resetState();
+        } catch (error) {
+            this.emitError('stream', error, { url });
+            throw error;
+        }
+    }
+
+    async loadFile(file) {
+        if (!file) {
+            throw new Error('No audio file provided');
+        }
+        await this.init();
+        this.stop();
+        this.detachMediaElement();
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            this.trackBuffer = await this.context.decodeAudioData(arrayBuffer);
+            this.sourceType = 'buffer';
+            this.resetState();
+        } catch (error) {
+            this.emitError('file', error, { name: file.name });
+            throw error;
+        }
+    }
+
+    async initializeMicrophone() {
+        await this.init();
+        this.stop();
+        this.detachMediaElement();
+        if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error('Microphone input is not supported in this browser');
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false
+                }
+            });
+            this.attachStream(stream);
+        } catch (error) {
+            this.emitError('permissions', error);
+            throw error;
+        }
+    }
+
+    async loadStream(url) {
+        await this.init();
+        this.stop();
+        this.detachMediaElement();
+
+        return new Promise((resolve, reject) => {
+            const audio = new Audio();
+            audio.crossOrigin = 'anonymous';
+            audio.preload = 'auto';
+            audio.src = url;
+
+            const cleanup = () => {
+                audio.removeEventListener('canplay', onReady);
+                audio.removeEventListener('error', onError);
+            };
+
+            const onReady = () => {
+                cleanup();
+                try {
+                    const source = this.context.createMediaElementSource(audio);
+                    source.connect(this.analyser);
+                    this.mediaElementSource = source;
+                    this.mediaElement = audio;
+                    this.mediaElement.loop = false;
+                    this.mediaElement.addEventListener('ended', () => {
+                        this.isPlaying = false;
+                    });
+                    this.trackBuffer = null;
+                    this.sourceType = 'media-element';
+                    this.resetState();
+                    resolve();
+                } catch (error) {
+                    this.emitError('stream', error, { url });
+                    reject(error);
+                }
+            };
+
+            const onError = () => {
+                cleanup();
+                const err = audio.error || new Error('Unknown audio stream error');
+                this.emitError('stream', err, { url });
+                reject(err);
+            };
+
+            audio.addEventListener('canplay', onReady, { once: true });
+            audio.addEventListener('error', onError, { once: true });
+
+            try {
+                audio.load();
+            } catch (error) {
+                cleanup();
+                this.emitError('stream', error, { url });
+                reject(error);
+            }
+        });
+    }
+
+    attachStream(stream) {
+        this.detachStream();
+        this.mediaStream = stream;
+        this.streamNode = this.context.createMediaStreamSource(stream);
+        this.streamNode.connect(this.analyser);
+        this.trackBuffer = null;
+        this.sourceType = 'mic';
+        this.isPlaying = true;
+        this.startTime = this.context.currentTime;
+        this.pauseTime = 0;
+    }
+
+    detachStream() {
+        if (this.streamNode) {
+            try {
+                this.streamNode.disconnect();
+            } catch (e) {
+                console.warn('Stream disconnect error:', e);
+            }
+            this.streamNode = null;
+        }
+        if (this.mediaStream) {
+            this.mediaStream.getTracks().forEach(track => track.stop());
+            this.mediaStream = null;
+        }
+    }
+
+    detachMediaElement() {
+        if (this.mediaElementSource) {
+            try {
+                this.mediaElementSource.disconnect();
+            } catch (error) {
+                console.warn('Media element disconnect error:', error);
+            }
+            this.mediaElementSource = null;
+        }
+        if (this.mediaElement) {
+            try {
+                this.mediaElement.pause();
+                this.mediaElement.src = '';
+                this.mediaElement.load();
+            } catch (error) {
+                console.warn('Media element cleanup error:', error);
+            }
+            this.mediaElement = null;
+        }
+        this.pauseTime = 0;
     }
 
     useBuffer(buffer) {
         this.trackBuffer = buffer;
+        this.sourceType = 'buffer';
         this.resetState();
     }
 
@@ -57,20 +219,60 @@ export class AudioService {
         this.metronomePhase = 0;
         this.lastBeatTime = 0;
         this.energyHistory = [];
+        this.source = null;
     }
 
-    play() {
-        if (!this.trackBuffer || !this.context) {
+    async play() {
+        if (!this.context) {
             return;
         }
 
-        if (this.isPlaying) return;
+        if (this.context.state === 'suspended') {
+            try {
+                await this.context.resume();
+            } catch (error) {
+                this.emitError('context', error);
+            }
+        }
+
+        if (this.sourceType === 'mic') {
+            this.isPlaying = true;
+            return;
+        }
+
+        if (this.sourceType === 'media-element') {
+            if (!this.mediaElement) return;
+            if (typeof this.pauseTime === 'number') {
+                try {
+                    this.mediaElement.currentTime = this.pauseTime;
+                } catch (error) {
+                    console.warn('Media element seek error:', error);
+                }
+            }
+            try {
+                await this.mediaElement.play();
+                this.isPlaying = true;
+            } catch (error) {
+                this.emitError('stream', error, { url: this.mediaElement.src });
+                throw error;
+            }
+            return;
+        }
+
+        if (!this.trackBuffer || this.isPlaying) {
+            return;
+        }
 
         this.source = this.context.createBufferSource();
         this.source.buffer = this.trackBuffer;
         this.source.connect(this.analyser);
         const offset = this.pauseTime || 0;
-        this.source.start(0, offset);
+        try {
+            this.source.start(0, offset);
+        } catch (error) {
+            this.emitError('buffer', error);
+            throw error;
+        }
         this.startTime = this.context.currentTime - offset;
         this.isPlaying = true;
         this.source.onended = () => {
@@ -79,15 +281,60 @@ export class AudioService {
         };
     }
 
-    pause() {
+    async pause() {
+        if (!this.context) return;
+
+        if (this.sourceType === 'mic') {
+            this.isPlaying = false;
+            if (this.context.state === 'running') {
+                try {
+                    await this.context.suspend();
+                } catch (error) {
+                    this.emitError('context', error);
+                }
+            }
+            return;
+        }
+
+        if (this.sourceType === 'media-element') {
+            if (this.mediaElement) {
+                try {
+                    this.pauseTime = this.mediaElement.currentTime;
+                    this.mediaElement.pause();
+                } catch (error) {
+                    this.emitError('stream', error, { url: this.mediaElement.src });
+                }
+            }
+            this.isPlaying = false;
+            return;
+        }
+
         if (!this.isPlaying) return;
         this.pauseTime = this.context.currentTime - this.startTime;
         this.stopSource();
+        this.isPlaying = false;
     }
 
     stop() {
         if (!this.context) return;
         this.pauseTime = 0;
+        if (this.sourceType === 'mic') {
+            this.detachStream();
+            this.isPlaying = false;
+            return;
+        }
+        if (this.sourceType === 'media-element') {
+            if (this.mediaElement) {
+                try {
+                    this.mediaElement.pause();
+                    this.mediaElement.currentTime = 0;
+                } catch (error) {
+                    console.warn('Media element stop error:', error);
+                }
+            }
+            this.isPlaying = false;
+            return;
+        }
         this.stopSource();
         this.isPlaying = false;
     }
@@ -118,6 +365,10 @@ export class AudioService {
         this.metronomeEnabled = enabled;
     }
 
+    getSourceType() {
+        return this.sourceType;
+    }
+
     onBeat(callback) {
         this.listeners.beat.add(callback);
         return () => this.listeners.beat.delete(callback);
@@ -126,6 +377,21 @@ export class AudioService {
     onAnalyser(callback) {
         this.listeners.analyser.add(callback);
         return () => this.listeners.analyser.delete(callback);
+    }
+
+    onError(callback) {
+        this.listeners.error.add(callback);
+        return () => this.listeners.error.delete(callback);
+    }
+
+    emitError(type, error, context = {}) {
+        this.listeners.error.forEach(cb => {
+            try {
+                cb({ type, error, context });
+            } catch (listenerError) {
+                console.error('Audio error listener failed:', listenerError);
+            }
+        });
     }
 
     update(dt) {
@@ -214,5 +480,26 @@ export class AudioService {
                 ? this.energyHistory[this.energyHistory.length - 1]
                 : 0
         };
+    }
+
+    async shutdown() {
+        this.stop();
+        this.detachStream();
+        this.detachMediaElement();
+        if (this.context && this.context.state !== 'closed') {
+            try {
+                await this.context.close();
+            } catch (error) {
+                console.warn('Audio context close error:', error);
+            }
+        }
+        this.context = null;
+        this.analyser = null;
+        this.gainNode = null;
+        this.frequencyData = null;
+        this.timeDomainData = null;
+        this.trackBuffer = null;
+        this.source = null;
+        this.isPlaying = false;
     }
 }

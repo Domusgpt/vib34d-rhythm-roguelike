@@ -8,74 +8,105 @@
 </head>
 <body>
     <div id="game-container">
-        <!-- Main Game Canvas -->
-        <canvas id="game-canvas"></canvas>
+        <div id="visualizer-root" aria-hidden="true"></div>
 
-        <!-- HUD Overlay -->
         <div id="hud">
             <div class="hud-top">
-                <div class="hud-score">
-                    <span class="label">SCORE</span>
-                    <span class="value" id="score">0</span>
-                </div>
-                <div class="hud-combo">
-                    <span class="label">COMBO</span>
-                    <span class="value" id="combo">0x</span>
-                </div>
-                <div class="hud-level">
+                <div class="hud-block">
                     <span class="label">LEVEL</span>
-                    <span class="value" id="level">1-1</span>
+                    <span class="value" data-hud="level">—</span>
+                </div>
+                <div class="hud-block">
+                    <span class="label">MODE</span>
+                    <span class="value" data-hud="mode">FACETED</span>
+                </div>
+                <div class="hud-block">
+                    <span class="label">GEOMETRY</span>
+                    <span class="value" data-hud="geometry">HYPERCUBE</span>
+                </div>
+                <div class="hud-block">
+                    <span class="label">SCORE</span>
+                    <span class="value" data-hud="score">0</span>
+                </div>
+                <div class="hud-block">
+                    <span class="label">COMBO</span>
+                    <span class="value" data-hud="combo">—</span>
+                </div>
+                <div class="hud-block compact">
+                    <span class="label">BPM</span>
+                    <span class="value" data-hud="bpm">120 BPM</span>
+                </div>
+                <div class="hud-block compact">
+                    <span class="label">FPS</span>
+                    <span class="value" data-hud="fps">60 FPS</span>
                 </div>
             </div>
 
             <div class="hud-center">
-                <div class="geometry-indicator" id="geometry-display">HYPERCUBE</div>
-                <div class="dimension-meter" id="dimension-meter">
-                    <span class="label">4D</span>
-                    <div class="meter-fill"></div>
+                <div class="geometry-indicator">HYPERCUBE</div>
+                <div class="dimension-meter">
+                    <span class="label">DIMENSION</span>
+                    <div class="meter-track">
+                        <div class="meter-fill" id="dimension-fill" style="--dimension-level:0.5"></div>
+                    </div>
                 </div>
             </div>
 
             <div class="hud-bottom">
-                <div class="health-bar">
-                    <div class="health-fill" id="health"></div>
-                </div>
-                <div class="pulse-meter">
-                    <div class="pulse-fill" id="pulse"></div>
+                <div class="hud-bars">
+                    <div class="bar">
+                        <span class="label">SHIELD</span>
+                        <div class="bar-track">
+                            <div class="bar-fill" data-hud="shield" style="--shield-level:1"></div>
+                        </div>
+                    </div>
+                    <div class="bar">
+                        <span class="label">PULSE</span>
+                        <div class="bar-track">
+                            <div class="bar-fill pulse" data-hud="pulse" style="--pulse-level:0"></div>
+                        </div>
+                    </div>
                 </div>
                 <div class="chaos-indicator">
                     <span class="label">CHAOS</span>
-                    <div class="chaos-level" id="chaos"></div>
+                    <div class="chaos-level" id="chaos-display">0.00</div>
+                </div>
+                <div class="audio-bands">
+                    <div class="band bass" id="bass-band"></div>
+                    <div class="band mid" id="mid-band"></div>
+                    <div class="band high" id="high-band"></div>
                 </div>
             </div>
 
-            <!-- Audio Visualizer -->
-            <div class="audio-bands">
-                <div class="band bass" id="bass-band"></div>
-                <div class="band mid" id="mid-band"></div>
-                <div class="band high" id="high-band"></div>
-            </div>
+            <div class="hud-toast" data-hud="toast"></div>
         </div>
 
-        <!-- Start Screen -->
         <div id="start-screen" class="overlay active">
             <h1>VIB34D RHYTHM ROGUELIKE</h1>
-            <p>Navigate 4D geometric challenges synchronized to your music</p>
+            <p class="tagline">Synchronize 4D lattice challenges to any audio source.</p>
+
+            <div class="start-feedback" aria-live="polite">
+                <p id="start-status" class="feedback-line">Select an audio source to begin.</p>
+                <p id="start-error" class="feedback-line error" role="alert" aria-live="assertive"></p>
+            </div>
 
             <div class="audio-source-select">
                 <h3>Select Audio Source</h3>
                 <button class="source-btn" data-source="mic">🎤 Microphone</button>
                 <button class="source-btn" data-source="file">📁 Audio File</button>
-                <button class="source-btn" data-source="stream">🎵 Stream URL</button>
+                <button class="source-btn" data-source="stream">🌐 Stream URL</button>
             </div>
 
             <input type="file" id="audio-file" accept="audio/*" style="display:none">
             <input type="text" id="stream-url" placeholder="Enter stream URL..." style="display:none">
 
             <button id="start-game" class="primary-btn" disabled>START GAME</button>
+            <div class="start-tips">
+                <p>Tap or click to emit pulses. Long press to bend dimensions.</p>
+                <p>Space pauses. Microphone capture requires HTTPS or localhost.</p>
+            </div>
         </div>
 
-        <!-- Pause Menu -->
         <div id="pause-menu" class="overlay">
             <h2>PAUSED</h2>
             <button id="resume">Resume</button>
@@ -84,7 +115,6 @@
         </div>
     </div>
 
-    <!-- Game Modules -->
     <script type="module" src="src/main.js"></script>
 </body>
 </html>

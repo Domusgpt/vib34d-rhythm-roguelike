@@ -98,12 +98,12 @@ export class ModeController {
         return this.parameterManager.getAllParameters();
     }
 
-    render(interaction) {
+    render(interaction, targets = []) {
         const renderer = this.modeRenderers.get(this.activeMode);
         if (!renderer) return;
         if (interaction) {
             renderer.updateInteraction(interaction);
         }
-        renderer.render();
+        renderer.render(targets);
     }
 }

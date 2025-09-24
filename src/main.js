@@ -1,361 +1,517 @@
-/**
- * VIB34D RHYTHM ROGUELIKE
- * Main Game Entry Point
- *
- * A roguelike rhythm game that generates 4D geometric challenges
- * from any audio input using mathematical visualization parameters.
- */
-
 import { LatticePulseGame } from './game/LatticePulseGame.js';
-import { ParameterManager } from './core/Parameters.js';
-import { AudioService } from './game/audio/AudioService.js';
-import { GameUI } from './ui/GameUI.js';
-import { VisualizerEngine } from './core/VisualizerEngine.js';
 
-class VIB34DRhythmGame {
+class GameBootstrap {
     constructor() {
-        this.gameCanvas = document.getElementById('game-canvas');
+        this.visualizerRoot = document.getElementById('visualizer-root');
         this.hudElement = document.getElementById('hud');
         this.startScreen = document.getElementById('start-screen');
+        this.pauseMenu = document.getElementById('pause-menu');
+        this.startButton = document.getElementById('start-game');
+        this.sourceButtons = Array.from(document.querySelectorAll('.source-btn'));
+        this.fileInput = document.getElementById('audio-file');
+        this.streamInput = document.getElementById('stream-url');
+        this.resumeButton = document.getElementById('resume');
+        this.restartButton = document.getElementById('restart');
+        this.quitButton = document.getElementById('quit');
+        this.dimensionFill = document.getElementById('dimension-fill');
+        this.chaosDisplay = document.getElementById('chaos-display');
+        this.bassBand = document.getElementById('bass-band');
+        this.midBand = document.getElementById('mid-band');
+        this.highBand = document.getElementById('high-band');
 
-        // Core systems
-        this.parameterManager = new ParameterManager();
-        this.audioService = new AudioService();
-        this.gameUI = new GameUI();
-        this.visualizer = new VisualizerEngine(this.gameCanvas);
+        this.game = null;
+        this.gameInitialized = false;
+        this.audioAnalyserDisposer = null;
+        this.audioErrorDisposer = null;
+        this.selectedAudio = null;
+        this.isStarting = false;
+        this.state = 'menu';
+        this.statusMessage = document.getElementById('start-status');
+        this.errorMessage = document.getElementById('start-error');
+        this.defaultStartLabel = this.startButton?.textContent || 'START GAME';
+        this.visibilityHandler = () => this.handleVisibilityChange();
 
-        // Game state
-        this.gameState = 'menu'; // menu, playing, paused, gameOver
-        this.currentLevel = 1;
-        this.selectedAudioSource = null;
-
-        this.initializeGame();
+        document.addEventListener('visibilitychange', this.visibilityHandler);
+        this.bindUI();
+        this.updateStartButtonState();
     }
 
-    async initializeGame() {
-        this.setupCanvas();
-        this.setupUI();
-        this.setupAudioSources();
+    bindUI() {
+        this.sourceButtons.forEach(button => {
+            button.addEventListener('click', () => this.selectAudioSource(button));
+        });
 
-        // Initialize visualizer with default parameters
-        await this.visualizer.initialize();
-        this.visualizer.setParameters(this.parameterManager.getAllParameters());
-
-        console.log('VIB34D Rhythm Roguelike initialized');
-    }
-
-    setupCanvas() {
-        const canvas = this.gameCanvas;
-        const container = document.getElementById('game-container');
-
-        // Set canvas size to match container
-        const resizeCanvas = () => {
-            const rect = container.getBoundingClientRect();
-            canvas.width = rect.width;
-            canvas.height = rect.height;
-
-            if (this.visualizer) {
-                this.visualizer.handleResize(canvas.width, canvas.height);
-            }
-        };
-
-        resizeCanvas();
-        window.addEventListener('resize', resizeCanvas);
-    }
-
-    setupUI() {
-        // Start screen controls
-        const sourceButtons = document.querySelectorAll('.source-btn');
-        const startButton = document.getElementById('start-game');
-        const audioFileInput = document.getElementById('audio-file');
-        const streamUrlInput = document.getElementById('stream-url');
-
-        sourceButtons.forEach(btn => {
-            btn.addEventListener('click', () => {
-                this.selectAudioSource(btn.dataset.source);
-                sourceButtons.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-
-                // Show/hide additional inputs
-                audioFileInput.style.display = btn.dataset.source === 'file' ? 'block' : 'none';
-                streamUrlInput.style.display = btn.dataset.source === 'stream' ? 'block' : 'none';
-
-                startButton.disabled = false;
+        if (this.fileInput) {
+            this.fileInput.addEventListener('change', event => {
+                const file = event.target.files?.[0] || null;
+                this.handleFileSelection(file);
             });
-        });
+        }
 
-        // File input handler
-        audioFileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                this.selectedAudioSource = { type: 'file', data: file };
-                startButton.disabled = false;
-            }
-        });
+        if (this.streamInput) {
+            this.streamInput.addEventListener('input', event => {
+                const value = event.target.value;
+                this.handleStreamInput(value);
+            });
+        }
 
-        // Stream URL handler
-        streamUrlInput.addEventListener('input', (e) => {
-            if (e.target.value.trim()) {
-                this.selectedAudioSource = { type: 'stream', data: e.target.value.trim() };
-                startButton.disabled = false;
-            }
-        });
+        if (this.startButton) {
+            this.startButton.addEventListener('click', () => {
+                this.startGame().catch(error => this.handleAudioError(error));
+            });
+        }
 
-        // Start game button
-        startButton.addEventListener('click', () => {
-            this.startGame();
-        });
+        if (this.resumeButton) {
+            this.resumeButton.addEventListener('click', () => {
+                this.resumeGame().catch(error => this.handleAudioError(error));
+            });
+        }
 
-        // Pause/resume controls
-        document.addEventListener('keydown', (e) => {
-            if (e.code === 'Space') {
-                e.preventDefault();
+        if (this.restartButton) {
+            this.restartButton.addEventListener('click', () => {
+                this.restartLevel().catch(error => this.handleAudioError(error));
+            });
+        }
+
+        if (this.quitButton) {
+            this.quitButton.addEventListener('click', () => {
+                this.quitToMenu().catch(error => this.handleAudioError(error));
+            });
+        }
+
+        document.addEventListener('keydown', event => {
+            if (event.code === 'Space') {
+                if (['INPUT', 'TEXTAREA'].includes(event.target.tagName)) {
+                    return;
+                }
+                event.preventDefault();
                 this.togglePause();
             }
         });
-
-        // Pause menu controls
-        document.getElementById('resume').addEventListener('click', () => this.resumeGame());
-        document.getElementById('restart').addEventListener('click', () => this.restartLevel());
-        document.getElementById('quit').addEventListener('click', () => this.quitToMenu());
     }
 
-    setupAudioSources() {
-        // Configure audio service for different input types
-        this.audioService.onBeat((beatData) => {
-            this.handleBeat(beatData);
-        });
+    handleFileSelection(file) {
+        if (this.selectedAudio?.type !== 'file') {
+            this.selectedAudio = { type: 'file', data: null };
+        }
 
-        this.audioService.onAnalyser((audioData) => {
-            this.handleAudioData(audioData);
+        if (file) {
+            this.selectedAudio = { type: 'file', data: file };
+            this.clearError();
+            this.showStatus(`Loaded ${file.name}`, 'success');
+        } else if (this.selectedAudio) {
+            this.selectedAudio.data = null;
+            this.showStatus('Choose an audio file to begin.', 'info');
+        }
+
+        this.updateStartButtonState();
+    }
+
+    handleStreamInput(value) {
+        const trimmed = value?.trim() || '';
+
+        if (this.selectedAudio?.type !== 'stream') {
+            this.selectedAudio = { type: 'stream', data: null };
+        }
+
+        if (!trimmed) {
+            if (this.selectedAudio) {
+                this.selectedAudio.data = null;
+            }
+            this.showStatus('Paste a direct stream URL to enable start.', 'info');
+            this.clearError();
+        } else if (!this.isValidStreamUrl(trimmed)) {
+            this.selectedAudio.data = null;
+            this.showError('Enter a valid https:// audio stream URL.');
+        } else {
+            this.selectedAudio.data = trimmed;
+            this.clearError();
+            this.showStatus('Stream source linked. Press start to connect.', 'success');
+        }
+
+        this.updateStartButtonState();
+    }
+
+    showStatus(message, tone = 'info') {
+        if (!this.statusMessage) return;
+        this.statusMessage.textContent = message;
+        this.statusMessage.classList.remove('success', 'warning');
+        if (tone === 'success' || tone === 'warning') {
+            this.statusMessage.classList.add(tone);
+        }
+    }
+
+    showError(message) {
+        if (this.errorMessage) {
+            this.errorMessage.textContent = message;
+        }
+    }
+
+    clearError() {
+        if (this.errorMessage) {
+            this.errorMessage.textContent = '';
+        }
+    }
+
+    getStartButtonLabel(canStart) {
+        if (!canStart || !this.selectedAudio) {
+            return this.defaultStartLabel;
+        }
+
+        const map = {
+            mic: 'Start with Microphone',
+            file: 'Start with File',
+            stream: 'Start with Stream'
+        };
+
+        return map[this.selectedAudio.type] || this.defaultStartLabel;
+    }
+
+    isValidStreamUrl(value) {
+        try {
+            const url = new URL(value);
+            return url.protocol === 'https:' || url.protocol === 'http:';
+        } catch (error) {
+            return false;
+        }
+    }
+
+    selectAudioSource(button) {
+        const type = button.dataset.source;
+        this.selectedAudio = { type, data: null };
+        this.sourceButtons.forEach(btn => btn.classList.toggle('active', btn === button));
+        if (this.fileInput) {
+            this.fileInput.style.display = type === 'file' ? 'block' : 'none';
+            if (type !== 'file') {
+                this.fileInput.value = '';
+            }
+        }
+        if (this.streamInput) {
+            this.streamInput.style.display = type === 'stream' ? 'block' : 'none';
+            if (type !== 'stream') {
+                this.streamInput.value = '';
+            }
+        }
+        if (type === 'mic') {
+            this.selectedAudio.data = null;
+        }
+        this.clearError();
+        switch (type) {
+            case 'mic':
+                this.showStatus('Microphone selected. Permission will be requested on start.', 'warning');
+                if (!navigator.mediaDevices?.getUserMedia) {
+                    this.showError('Microphone input is not supported in this browser.');
+                }
+                break;
+            case 'file':
+                this.showStatus('Choose an audio file to feed the lattice.', 'info');
+                break;
+            case 'stream':
+                this.handleStreamInput(this.streamInput?.value || '');
+                break;
+            default:
+                this.showStatus('Select an audio source to begin.', 'info');
+        }
+        this.updateStartButtonState();
+    }
+
+    updateStartButtonState() {
+        if (!this.startButton) return;
+        const canStart = this.canStart();
+        this.startButton.disabled = !canStart;
+        if (!this.startButton.classList.contains('loading')) {
+            this.startButton.textContent = this.getStartButtonLabel(canStart);
+        }
+    }
+
+    canStart() {
+        if (!this.selectedAudio) return false;
+        switch (this.selectedAudio.type) {
+            case 'mic':
+                return true;
+            case 'file':
+            case 'stream':
+                return Boolean(this.selectedAudio.data) && (this.selectedAudio.type !== 'stream' || this.isValidStreamUrl(this.selectedAudio.data));
+            default:
+                return false;
+        }
+    }
+
+    async ensureGame() {
+        if (this.gameInitialized) {
+            return;
+        }
+        if (!this.visualizerRoot || !this.hudElement) {
+            throw new Error('Missing required game DOM nodes');
+        }
+        this.game = new LatticePulseGame({ container: this.visualizerRoot, hudElement: this.hudElement });
+        await this.game.start();
+        this.bindAudioServiceListeners();
+        this.gameInitialized = true;
+        this.updateParameterHud();
+    }
+
+    bindAudioServiceListeners() {
+        if (!this.game?.audioService) return;
+        this.cleanupAudioHandlers();
+        this.audioAnalyserDisposer = this.game.audioService.onAnalyser(() => {
+            this.updateAudioBars(this.game.audioService.getBandLevels());
+            this.updateParameterHud();
+        });
+        this.audioErrorDisposer = this.game.audioService.onError(event => {
+            this.handleAudioError(event.error, event);
         });
     }
 
-    selectAudioSource(sourceType) {
-        this.selectedAudioSource = { type: sourceType };
+    cleanupAudioHandlers() {
+        if (this.audioAnalyserDisposer) {
+            this.audioAnalyserDisposer();
+            this.audioAnalyserDisposer = null;
+        }
+        if (this.audioErrorDisposer) {
+            this.audioErrorDisposer();
+            this.audioErrorDisposer = null;
+        }
+    }
+
+    handleAudioError(error, detail = {}) {
+        if (!error) return;
+        console.error('Audio error:', error);
+        const message = this.describeAudioError(error, detail);
+        this.showError(message);
+
+        if (detail?.type === 'permissions') {
+            this.showStatus('Microphone access denied. Update permissions and try again.', 'warning');
+        } else if (this.state === 'playing') {
+            this.showStatus('Audio interrupted. Game paused until the source recovers.', 'warning');
+        }
+
+        if (this.state === 'playing') {
+            this.pauseGame({ reason: 'error' }).catch(err => console.error(err));
+            this.pauseMenu?.classList.add('active');
+        } else if (this.state === 'menu') {
+            this.startScreen?.classList.add('active');
+        }
+        this.updateStartButtonState();
+    }
+
+    describeAudioError(error, detail = {}) {
+        if (!error) return 'Unknown audio error encountered.';
+        if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
+            return 'Access to the audio input was blocked by the browser.';
+        }
+        if (error.name === 'NotFoundError') {
+            return 'No audio input device was found.';
+        }
+        if (detail?.type === 'stream' && detail?.context?.url) {
+            return `Could not load audio from ${detail.context.url}. (${error.message || error.name})`;
+        }
+        if (detail?.type === 'file' && detail?.context?.name) {
+            return `The selected file "${detail.context.name}" could not be decoded.`;
+        }
+        if (error.message) {
+            return error.message;
+        }
+        return error.name || String(error);
+    }
+
+    handleVisibilityChange() {
+        if (document.hidden && this.state === 'playing') {
+            this.pauseGame({ reason: 'visibility' }).catch(err => console.error(err));
+        }
+    }
+
+    async prepareAudioSource() {
+        if (!this.game?.audioService || !this.selectedAudio) {
+            throw new Error('Audio source not ready');
+        }
+        const audioService = this.game.audioService;
+        const { type, data } = this.selectedAudio;
+        switch (type) {
+            case 'mic':
+                this.showStatus('Requesting microphone access…', 'warning');
+                await audioService.initializeMicrophone();
+                await audioService.play();
+                break;
+            case 'file':
+                if (!data) throw new Error('Select an audio file before starting');
+                this.showStatus('Loading audio file…', 'info');
+                await audioService.loadFile(data);
+                await audioService.play();
+                break;
+            case 'stream':
+                if (!data) throw new Error('Provide a stream URL before starting');
+                this.showStatus('Connecting to stream…', 'info');
+                await audioService.loadStream(data);
+                await audioService.play();
+                break;
+            default:
+                throw new Error('Select an audio input before starting');
+        }
     }
 
     async startGame() {
+        if (this.state === 'playing' || this.isStarting) {
+            return;
+        }
+        if (!this.canStart()) {
+            this.showError('Select an audio source to begin.');
+            return;
+        }
+
+        this.isStarting = true;
+        if (this.startButton) {
+            this.startButton.disabled = true;
+            this.startButton.classList.add('loading');
+            this.startButton.textContent = 'Initializing…';
+        }
+
         try {
-            this.startScreen.classList.remove('active');
-            this.gameState = 'playing';
-
-            // Initialize audio based on selected source
-            await this.initializeAudio();
-
-            // Start the game loop
-            this.startGameLoop();
-
-            console.log('Game started with audio source:', this.selectedAudioSource.type);
-
+            this.clearError();
+            this.showStatus('Booting game systems…', 'info');
+            await this.ensureGame();
+            await this.prepareAudioSource();
+            this.game.resetRun();
+            await this.game.resume();
+            this.state = 'playing';
+            this.startScreen?.classList.remove('active');
+            this.pauseMenu?.classList.remove('active');
+            this.showStatus('Audio locked. Space pauses, long press bends space.', 'success');
+            this.clearError();
         } catch (error) {
             console.error('Failed to start game:', error);
-            alert('Failed to initialize audio. Please check your audio source.');
-            this.quitToMenu();
-        }
-    }
-
-    async initializeAudio() {
-        const source = this.selectedAudioSource;
-
-        switch (source.type) {
-            case 'mic':
-                await this.audioService.initializeMicrophone();
-                break;
-
-            case 'file':
-                if (source.data) {
-                    await this.audioService.loadFile(source.data);
-                    this.audioService.play();
-                }
-                break;
-
-            case 'stream':
-                await this.audioService.loadTrack(source.data);
-                this.audioService.play();
-                break;
-
-            default:
-                throw new Error('Invalid audio source type');
-        }
-    }
-
-    startGameLoop() {
-        let lastTime = 0;
-
-        const gameLoop = (currentTime) => {
-            if (this.gameState !== 'playing') return;
-
-            const deltaTime = (currentTime - lastTime) / 1000;
-            lastTime = currentTime;
-
-            this.update(deltaTime);
-            this.render();
-
-            requestAnimationFrame(gameLoop);
-        };
-
-        requestAnimationFrame(gameLoop);
-    }
-
-    update(deltaTime) {
-        // Update audio analysis
-        this.audioService.update(deltaTime);
-
-        // Update visualizer parameters based on audio
-        this.updateVisualizerFromAudio();
-
-        // Update game UI
-        this.gameUI.update(deltaTime);
-    }
-
-    render() {
-        // Render the VIB34D visualizer
-        this.visualizer.render();
-
-        // Update HUD displays
-        this.updateHUD();
-    }
-
-    handleBeat(beatData) {
-        // Generate geometric challenges based on beat
-        this.generateBeatChallenge(beatData);
-
-        // Update UI beat indicator
-        this.gameUI.showBeatIndicator();
-
-        console.log('Beat detected:', beatData);
-    }
-
-    handleAudioData(audioData) {
-        // Use audio frequency data to modulate visualizer parameters
-        const params = this.parameterManager.getAllParameters();
-
-        // Map audio bands to parameter changes
-        const bassLevel = audioData.frequencyData ? this.getFrequencyRange(audioData.frequencyData, 0, 0.1) : 0;
-        const midLevel = audioData.frequencyData ? this.getFrequencyRange(audioData.frequencyData, 0.1, 0.5) : 0;
-        const highLevel = audioData.frequencyData ? this.getFrequencyRange(audioData.frequencyData, 0.5, 1.0) : 0;
-
-        // Update parameters based on audio analysis
-        params.gridDensity = 15 + (bassLevel * 25); // 15-40 range
-        params.chaos = Math.min(highLevel * 0.8, 1.0); // 0-0.8 range
-        params.speed = 0.8 + (midLevel * 1.2); // 0.8-2.0 range
-        params.hue = (params.hue + (audioData.energy || 0) * 30) % 360;
-
-        this.parameterManager.setParameters(params);
-        this.visualizer.setParameters(params);
-
-        // Update audio visualization bars in HUD
-        this.updateAudioBars(bassLevel, midLevel, highLevel);
-    }
-
-    getFrequencyRange(frequencyData, startPercent, endPercent) {
-        const startIndex = Math.floor(frequencyData.length * startPercent);
-        const endIndex = Math.floor(frequencyData.length * endPercent);
-
-        let sum = 0;
-        let count = 0;
-
-        for (let i = startIndex; i < endIndex; i++) {
-            if (frequencyData[i] !== -Infinity) {
-                sum += Math.pow(10, frequencyData[i] / 20);
-                count++;
+            this.state = 'menu';
+            const type = error?.name === 'NotAllowedError' ? 'permissions' : this.selectedAudio?.type;
+            const detail = {
+                type,
+                context:
+                    this.selectedAudio?.type === 'file'
+                        ? { name: this.selectedAudio.data?.name }
+                        : this.selectedAudio?.type === 'stream'
+                        ? { url: this.selectedAudio.data }
+                        : {}
+            };
+            this.handleAudioError(error, detail);
+        } finally {
+            this.isStarting = false;
+            if (this.startButton) {
+                this.startButton.classList.remove('loading');
+                this.startButton.textContent = this.getStartButtonLabel(this.canStart());
             }
+            this.updateStartButtonState();
         }
-
-        return count > 0 ? sum / count : 0;
     }
 
-    generateBeatChallenge(beatData) {
-        // Generate geometric challenge based on current parameters and beat strength
-        const params = this.parameterManager.getAllParameters();
-        const challengeType = this.getChallengeType(params.geometry, beatData.energy);
-
-        // This will be expanded to generate specific challenges
-        console.log('Generated challenge:', challengeType, 'for geometry:', params.geometry);
+    async pauseGame({ reason = 'manual' } = {}) {
+        if (!this.game || this.state !== 'playing') return;
+        try {
+            await this.game.pause();
+        } catch (error) {
+            console.error('Pause failed:', error);
+            this.showError(error.message || 'Failed to pause audio.');
+            return;
+        }
+        this.state = 'paused';
+        this.pauseMenu?.classList.add('active');
+        if (reason === 'visibility') {
+            this.game?.hud?.showToast?.('Paused — tab inactive');
+            this.showStatus('Paused because the tab is hidden.', 'warning');
+        } else if (reason === 'manual') {
+            this.showStatus('Paused. Press resume or Space to continue.', 'info');
+        }
     }
 
-    getChallengeType(geometryType, energy) {
-        const challenges = [
-            'vertex_precision', 'edge_traversal', 'face_alignment',
-            'rotation_sync', 'dimensional_shift', 'morphing_adaptation'
-        ];
-
-        const energyIndex = Math.floor(energy * challenges.length);
-        return challenges[Math.min(energyIndex, challenges.length - 1)];
+    async resumeGame() {
+        if (!this.game || this.state !== 'paused') return;
+        try {
+            await this.game.resume();
+        } catch (error) {
+            this.handleAudioError(error);
+            return;
+        }
+        this.state = 'playing';
+        this.pauseMenu?.classList.remove('active');
+        this.showStatus('Back in the grid. Space pauses.', 'success');
+        this.clearError();
     }
 
-    updateVisualizerFromAudio() {
-        // Additional real-time parameter updates
-        const params = this.parameterManager.getAllParameters();
-        this.visualizer.setParameters(params);
+    async restartLevel() {
+        if (!this.game) return;
+        this.game.resetRun();
+        try {
+            await this.game.resume();
+        } catch (error) {
+            this.handleAudioError(error);
+            return;
+        }
+        this.state = 'playing';
+        this.pauseMenu?.classList.remove('active');
+        this.showStatus('Run restarted with the same audio source.', 'info');
+        this.clearError();
     }
 
-    updateHUD() {
-        // Update score, combo, level displays
-        // This will be connected to actual game state
-        document.getElementById('score').textContent = '0';
-        document.getElementById('combo').textContent = '0x';
-        document.getElementById('level').textContent = `${this.currentLevel}-1`;
-
-        // Update geometry display
-        const geometryNames = ['TETRAHEDRON', 'HYPERCUBE', 'SPHERE', 'TORUS', 'KLEIN BOTTLE', 'FRACTAL', 'WAVE', 'CRYSTAL'];
-        const params = this.parameterManager.getAllParameters();
-        document.getElementById('geometry-display').textContent = geometryNames[params.geometry] || 'HYPERCUBE';
-
-        // Update dimension meter
-        const dimensionPercent = ((params.dimension - 3.0) / 1.5) * 100;
-        document.querySelector('#dimension-meter .meter-fill').style.width = `${dimensionPercent}%`;
-    }
-
-    updateAudioBars(bass, mid, high) {
-        document.getElementById('bass-band').style.height = `${bass * 100}%`;
-        document.getElementById('mid-band').style.height = `${mid * 100}%`;
-        document.getElementById('high-band').style.height = `${high * 100}%`;
+    async quitToMenu() {
+        if (!this.game) return;
+        this.cleanupAudioHandlers();
+        try {
+            await this.game.shutdown();
+        } catch (error) {
+            console.error('Failed to shutdown game cleanly:', error);
+        }
+        this.state = 'menu';
+        this.pauseMenu?.classList.remove('active');
+        this.startScreen?.classList.add('active');
+        if (typeof window !== 'undefined') {
+            window.audioReactive = { bass: 0, mid: 0, high: 0, energy: 0 };
+        }
+        this.updateAudioBars({ bass: 0, mid: 0, high: 0, energy: 0 });
+        this.updateParameterHud();
+        this.showStatus('Select an audio source to launch another run.', 'info');
+        this.clearError();
+        this.updateStartButtonState();
     }
 
     togglePause() {
-        if (this.gameState === 'playing') {
-            this.pauseGame();
-        } else if (this.gameState === 'paused') {
-            this.resumeGame();
+        if (this.state === 'playing') {
+            this.pauseGame().catch(error => this.handleAudioError(error));
+        } else if (this.state === 'paused') {
+            this.resumeGame().catch(error => this.handleAudioError(error));
         }
     }
 
-    pauseGame() {
-        this.gameState = 'paused';
-        this.audioService.pause();
-        document.getElementById('pause-menu').classList.add('active');
+    updateAudioBars(levels) {
+        if (!levels) return;
+        const clamp = value => Math.max(0, Math.min(1, value));
+        if (this.bassBand) {
+            this.bassBand.style.height = `${clamp(levels.bass * 1.4) * 100}%`;
+        }
+        if (this.midBand) {
+            this.midBand.style.height = `${clamp(levels.mid * 1.2) * 100}%`;
+        }
+        if (this.highBand) {
+            this.highBand.style.height = `${clamp(levels.high * 1.1) * 100}%`;
+        }
     }
 
-    resumeGame() {
-        this.gameState = 'playing';
-        this.audioService.play();
-        document.getElementById('pause-menu').classList.remove('active');
-        this.startGameLoop();
-    }
-
-    restartLevel() {
-        // Restart current level
-        this.resumeGame();
-        // Additional restart logic will be added
-    }
-
-    quitToMenu() {
-        this.gameState = 'menu';
-        this.audioService.stop();
-        document.getElementById('pause-menu').classList.remove('active');
-        this.startScreen.classList.add('active');
-
-        // Reset game state
-        this.currentLevel = 1;
-        this.selectedAudioSource = null;
+    updateParameterHud() {
+        if (!this.game) return;
+        const params = this.game.modeController.getParameters();
+        if (this.dimensionFill && typeof params.dimension === 'number') {
+            const percent = Math.max(0, Math.min(1, (params.dimension - 3) / 1.5));
+            this.dimensionFill.style.setProperty('--dimension-level', percent.toFixed(3));
+            this.dimensionFill.style.transform = `scaleX(${percent})`;
+        }
+        if (this.chaosDisplay && typeof params.chaos === 'number') {
+            this.chaosDisplay.textContent = params.chaos.toFixed(2);
+        }
+        const geometryValue = this.hudElement?.querySelector('[data-hud="geometry"]');
+        const geometryIndicator = this.hudElement?.querySelector('.geometry-indicator');
+        if (geometryValue && geometryIndicator) {
+            geometryIndicator.textContent = geometryValue.textContent;
+        }
     }
 }
 
-// Initialize the game when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    window.game = new VIB34DRhythmGame();
+    new GameBootstrap();
 });
-
-export { VIB34DRhythmGame };

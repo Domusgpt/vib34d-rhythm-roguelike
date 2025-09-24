@@ -31,6 +31,12 @@ export class LatticePulseGame {
         this.timeScale = 1.0;
         this.currentLevel = null;
         this.lastPulseCaptureIds = new Set();
+        this.renderTargets = [];
+        this.baseParameters = null;
+        this.currentParameters = null;
+        this.parameterSmoothing = 0.12;
+        this.dynamicDifficulty = 1.0;
+        this.started = false;
         this.inputMapping = new InputMapping({
             element: container,
             onParameterDelta: deltas => this.modeController.applyParameterDelta(deltas),
@@ -48,6 +54,12 @@ export class LatticePulseGame {
     }
 
     async start() {
+        if (this.started) {
+            this.resetRun();
+            this.gameLoop.start();
+            return;
+        }
+
         this.modeController.initialize();
         await this.audioService.init();
         this.spawnSystem.initialize();
@@ -56,6 +68,7 @@ export class LatticePulseGame {
         this.hud.setLevel(this.currentLevel?.name || '');
         this.hud.setMode(this.currentLevel?.system || 'faceted');
         this.hud.setGeometry(this.geometryController.getGeometryName());
+        this.started = true;
         this.gameLoop.start();
     }
 
@@ -84,6 +97,10 @@ export class LatticePulseGame {
         this.hud.setGeometry(this.geometryController.getGeometryName());
         this.hud.setLevel(level.name || '');
         this.resetRun();
+        this.baseParameters = this.modeController.getParameters();
+        this.currentParameters = { ...this.baseParameters };
+        this.dynamicDifficulty = level.difficulty?.speed || 1;
+        this.spawnSystem.difficulty = this.dynamicDifficulty;
     }
 
     setupSpawnEvents() {
@@ -123,9 +140,95 @@ export class LatticePulseGame {
         this.health = 1.0;
         this.spawnSystem.activeTargets = [];
         this.lastPulseCaptureIds.clear();
+        this.renderTargets = [];
         this.hud.setScore(this.score);
         this.hud.setCombo(this.combo);
         this.hud.setShieldMeter(this.health);
+        if (this.baseParameters) {
+            this.currentParameters = { ...this.baseParameters };
+        }
+        const baseDifficulty = this.currentLevel?.difficulty?.speed || 1;
+        this.dynamicDifficulty = baseDifficulty;
+        this.spawnSystem.difficulty = this.dynamicDifficulty;
+    }
+
+    applyAudioToParameters(bands) {
+        if (!bands) return;
+        if (!this.baseParameters) {
+            this.baseParameters = this.modeController.getParameters();
+            this.currentParameters = { ...this.baseParameters };
+        }
+
+        const levels = this.normalizeBands(bands);
+        const comboFactor = Math.min(1, this.combo / 32);
+
+        const target = {
+            gridDensity: this.baseParameters.gridDensity * (0.85 + levels.bass * 0.65),
+            chaos: this.clamp(this.baseParameters.chaos + levels.high * 0.5 + comboFactor * 0.25, 0, 1),
+            speed: this.baseParameters.speed * (0.9 + levels.energy * 0.6 + comboFactor * 0.3),
+            intensity: this.clamp(this.baseParameters.intensity + levels.energy * 0.4, 0, 1),
+            saturation: this.clamp(this.baseParameters.saturation + levels.high * 0.2, 0, 1),
+            hue: (this.baseParameters.hue + levels.energy * 90 + comboFactor * 60) % 360,
+            rot4dXW: this.wrapRotation(this.baseParameters.rot4dXW + (levels.mid - 0.5) * 1.2),
+            rot4dYW: this.wrapRotation(this.baseParameters.rot4dYW + (levels.mid - 0.5) * 0.9),
+            rot4dZW: this.wrapRotation(this.baseParameters.rot4dZW + (levels.high - 0.5) * 0.8),
+            dimension: this.clamp(this.baseParameters.dimension + levels.bass * 0.35 + comboFactor * 0.2, 3.0, 4.5),
+            morphFactor: this.clamp(this.baseParameters.morphFactor + levels.energy * 0.4 - 0.1, 0, 2),
+            variation: this.baseParameters.variation,
+            geometry: this.baseParameters.geometry
+        };
+
+        if (!this.currentParameters) {
+            this.currentParameters = { ...this.baseParameters };
+        }
+
+        const smoothed = { ...this.currentParameters };
+        Object.entries(target).forEach(([key, value]) => {
+            const current = this.currentParameters[key] ?? this.baseParameters[key] ?? 0;
+            if (key === 'hue') {
+                smoothed[key] = this.lerpAngle(current, value, this.parameterSmoothing);
+            } else if (typeof value === 'number') {
+                smoothed[key] = this.lerp(current, value, this.parameterSmoothing);
+            } else {
+                smoothed[key] = value;
+            }
+        });
+
+        this.currentParameters = smoothed;
+        this.modeController.updateParameters(smoothed);
+
+        const baseDifficulty = this.currentLevel?.difficulty?.speed || 1;
+        const energyScale = 0.75 + levels.energy * 0.8 + comboFactor * 0.4;
+        this.dynamicDifficulty = baseDifficulty * energyScale;
+        this.spawnSystem.difficulty = this.dynamicDifficulty;
+    }
+
+    normalizeBands(bands) {
+        const clamp01 = value => Math.max(0, Math.min(1, value));
+        return {
+            bass: clamp01(bands.bass / 1.25),
+            mid: clamp01(bands.mid / 1.4),
+            high: clamp01(bands.high / 1.6),
+            energy: clamp01(Math.max(0, bands.energy) * 1.5)
+        };
+    }
+
+    lerp(a, b, t) {
+        return a + (b - a) * t;
+    }
+
+    lerpAngle(current, target, t) {
+        let delta = ((target - current + 540) % 360) - 180;
+        const value = current + delta * t;
+        return (value % 360 + 360) % 360;
+    }
+
+    clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    wrapRotation(value) {
+        return this.clamp(value, -2, 2);
     }
 
     handlePulse(pulse) {
@@ -150,9 +253,11 @@ export class LatticePulseGame {
             high: bands.high,
             energy: bands.energy
         };
+        this.applyAudioToParameters(bands);
 
         this.spawnSystem.update(scaledDt);
         const targets = this.spawnSystem.getTargets();
+        this.renderTargets = targets;
         this.collisionSystem.rebuild(targets);
         this.resolveCollisions();
 
@@ -195,7 +300,23 @@ export class LatticePulseGame {
     }
 
     render() {
-        this.modeController.render(this.inputMapping.getInteraction());
+        const interaction = this.inputMapping.getInteraction();
+        this.modeController.render(interaction, this.renderTargets);
         this.performanceController.recordFrame();
+    }
+
+    async pause() {
+        this.gameLoop.stop();
+        await this.audioService.pause();
+    }
+
+    async resume() {
+        await this.audioService.play();
+        this.gameLoop.start();
+    }
+
+    async shutdown() {
+        this.gameLoop.stop();
+        await this.audioService.shutdown();
     }
 }

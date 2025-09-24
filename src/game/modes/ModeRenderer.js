@@ -83,11 +83,11 @@ export class ModeRenderer {
         });
     }
 
-    render() {
+    render(targets = []) {
         if (!this.active) return;
         this.visualizers.forEach(visualizer => {
             if (visualizer?.render) {
-                visualizer.render();
+                visualizer.render(targets);
             }
         });
     }

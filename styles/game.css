@@ -28,14 +28,28 @@ body {
     background: linear-gradient(45deg, #0a0015, #1a001a, #000030);
 }
 
-/* Main Game Canvas */
-#game-canvas {
+/* Visualizer Layers */
+#visualizer-root {
     position: absolute;
-    top: 0;
-    left: 0;
+    inset: 0;
+    overflow: hidden;
+    z-index: 1;
+}
+
+.mode-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    z-index: 2;
+}
+
+.visual-canvas {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
-    background: transparent;
+    display: block;
 }
 
 /* HUD System */
@@ -53,31 +67,39 @@ body {
 .hud-top {
     position: absolute;
     top: 20px;
-    left: 0;
-    right: 0;
+    left: 20px;
+    right: 20px;
     display: flex;
-    justify-content: space-between;
-    padding: 0 30px;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
 }
 
-.hud-score, .hud-combo, .hud-level {
+.hud-block {
     display: flex;
     flex-direction: column;
     align-items: center;
-    background: rgba(0, 0, 0, 0.8);
-    padding: 10px 15px;
-    border: 2px solid #00ffff;
-    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.75);
+    padding: 10px 14px;
+    border: 2px solid rgba(0, 255, 255, 0.6);
+    border-radius: 10px;
     min-width: 80px;
+    backdrop-filter: blur(6px);
 }
 
-.hud-score .label, .hud-combo .label, .hud-level .label {
-    font-size: 10px;
-    color: #888;
-    margin-bottom: 5px;
+.hud-block.compact {
+    min-width: 70px;
+    padding: 8px 12px;
 }
 
-.hud-score .value, .hud-combo .value, .hud-level .value {
+.hud-block .label {
+    font-size: 11px;
+    color: #8ac5ff;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+}
+
+.hud-block .value {
     font-size: 18px;
     font-weight: bold;
     color: #00ffff;
@@ -108,11 +130,7 @@ body {
 }
 
 .dimension-meter {
-    width: 200px;
-    height: 8px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
-    overflow: hidden;
+    width: 240px;
     margin: 0 auto;
 }
 
@@ -124,12 +142,30 @@ body {
     margin-bottom: 5px;
 }
 
+.dimension-meter .meter-track {
+    width: 100%;
+    height: 10px;
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
 .dimension-meter .meter-fill {
+    width: 100%;
     height: 100%;
     background: linear-gradient(90deg, #00ffff, #ff00ff);
-    width: 50%;
-    transition: width 0.3s ease;
-    border-radius: 4px;
+    transform: scaleX(var(--dimension-level, 0.5));
+    transform-origin: left center;
+    transition: transform 0.25s ease;
+}
+
+.dimension-meter .meter-fill::after {
+    content: '';
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.4), transparent);
+    mix-blend-mode: screen;
 }
 
 /* HUD Bottom Bar */
@@ -140,42 +176,45 @@ body {
     right: 30px;
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-end;
 }
 
-/* Health Bar */
-.health-bar {
-    width: 200px;
-    height: 12px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 6px;
-    overflow: hidden;
+.hud-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
 }
 
-.health-fill {
-    height: 100%;
-    background: #4ade80;
+.bar {
+    min-width: 220px;
+}
+
+.bar .label {
+    font-size: 11px;
+    color: #8ac5ff;
+    margin-bottom: 6px;
+}
+
+.bar-track {
     width: 100%;
-    transition: all 0.3s ease;
+    height: 12px;
+    background: rgba(255, 255, 255, 0.18);
     border-radius: 6px;
-}
-
-/* Pulse Meter */
-.pulse-meter {
-    width: 150px;
-    height: 8px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
     overflow: hidden;
 }
 
-.pulse-fill {
+.bar-fill {
+    width: 100%;
     height: 100%;
-    background: linear-gradient(90deg, #ff0080, #ff8000);
-    width: 0%;
-    transition: width 0.1s ease;
-    border-radius: 4px;
-    opacity: 0.8;
+    background: linear-gradient(90deg, #02ffc7, #00b7ff);
+    transform: scaleX(var(--shield-level, 1));
+    transform-origin: left center;
+    transition: transform 0.2s ease;
+}
+
+.bar-fill.pulse {
+    background: linear-gradient(90deg, #ff0080, #ffb400);
+    transform: scaleX(var(--pulse-level, 0));
 }
 
 /* Chaos Indicator */
@@ -196,6 +235,29 @@ body {
     font-size: 12px;
     color: #00ff00;
     letter-spacing: 1px;
+}
+
+.hud-toast {
+    position: absolute;
+    bottom: 45%;
+    left: 50%;
+    transform: translate(-50%, 0) scale(0.9);
+    background: rgba(0, 0, 0, 0.85);
+    color: #fff;
+    padding: 14px 24px;
+    border-radius: 12px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    opacity: 0;
+    transition: all 0.3s ease;
+    pointer-events: none;
+    border: 2px solid rgba(0, 255, 255, 0.4);
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+}
+
+.hud-toast.visible {
+    opacity: 1;
+    transform: translate(-50%, -10px) scale(1);
 }
 
 /* Audio Visualizer */
@@ -265,10 +327,53 @@ body {
     margin-bottom: 20px;
 }
 
-#start-screen p {
+#start-screen .tagline {
     font-size: 18px;
-    color: #888;
-    margin-bottom: 40px;
+    color: #8fa5ff;
+    margin-bottom: 24px;
+}
+
+.start-feedback {
+    min-height: 64px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 24px;
+}
+
+.feedback-line {
+    font-size: 16px;
+    color: #bcd6ff;
+    min-height: 20px;
+    transition: color 0.2s ease;
+    max-width: 480px;
+}
+
+.feedback-line.success {
+    color: #7dffcf;
+}
+
+.feedback-line.warning {
+    color: #ffd26f;
+}
+
+.feedback-line.error {
+    color: #ff7070;
+    font-weight: bold;
+}
+
+.start-tips {
+    margin-top: 36px;
+    color: #666;
+    font-size: 14px;
+    line-height: 1.6;
+    max-width: 460px;
+}
+
+.start-tips p + p {
+    margin-top: 6px;
 }
 
 .audio-source-select {
@@ -279,6 +384,26 @@ body {
     color: #fff;
     margin-bottom: 20px;
     font-size: 20px;
+}
+
+#start-screen input[type="file"],
+#start-screen input[type="text"] {
+    margin-top: 10px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 255, 255, 0.4);
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-family: inherit;
+    width: clamp(280px, 32vw, 360px);
+    text-align: center;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+#start-screen input[type="text"]:focus {
+    outline: none;
+    border-color: #00ffff;
+    box-shadow: 0 0 12px rgba(0, 255, 255, 0.4);
 }
 
 .source-btn {
@@ -329,6 +454,12 @@ body {
     opacity: 0.5;
     cursor: not-allowed;
     transform: none;
+}
+
+.primary-btn.loading {
+    position: relative;
+    opacity: 0.7;
+    pointer-events: none;
 }
 
 /* Pause Menu */
@@ -465,16 +596,17 @@ body.beat-flash {
 /* Responsive Design */
 @media (max-width: 768px) {
     .hud-top {
-        padding: 0 15px;
-        top: 10px;
+        top: 12px;
+        left: 12px;
+        right: 12px;
     }
 
-    .hud-score, .hud-combo, .hud-level {
-        padding: 8px 12px;
-        min-width: 60px;
+    .hud-block {
+        min-width: 64px;
+        padding: 8px 10px;
     }
 
-    .hud-score .value, .hud-combo .value, .hud-level .value {
+    .hud-block .value {
         font-size: 14px;
     }
 
@@ -483,28 +615,30 @@ body.beat-flash {
     }
 
     .dimension-meter {
-        width: 150px;
+        width: 180px;
     }
 
     .hud-bottom {
-        bottom: 20px;
-        left: 15px;
-        right: 15px;
+        bottom: 18px;
+        left: 16px;
+        right: 16px;
+        flex-direction: column;
+        gap: 18px;
+        align-items: stretch;
     }
 
-    .health-bar {
-        width: 150px;
-        height: 10px;
+    .hud-bars {
+        width: 100%;
     }
 
-    .pulse-meter {
-        width: 100px;
-        height: 6px;
+    .bar {
+        min-width: unset;
     }
 
     .audio-bands {
-        bottom: 20px;
-        right: 15px;
+        align-self: center;
+        bottom: auto;
+        right: auto;
         height: 40px;
     }
 
