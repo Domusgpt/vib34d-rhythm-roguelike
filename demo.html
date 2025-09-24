@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIB34D Demo - Basic System Check</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Courier New', monospace;
+            background: #000;
+            color: #0ff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .demo-container {
+            text-align: center;
+            padding: 40px;
+            border: 2px solid #0ff;
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.8);
+        }
+        h1 { color: #ff0080; text-shadow: 0 0 20px #ff0080; margin-bottom: 20px; }
+        .status { margin: 10px 0; }
+        .success { color: #0f0; }
+        .error { color: #f00; }
+        .pending { color: #ff0; }
+        canvas { border: 1px solid #333; margin: 20px 0; }
+        button {
+            padding: 15px 25px;
+            background: rgba(0, 255, 255, 0.1);
+            border: 2px solid #0ff;
+            color: #0ff;
+            cursor: pointer;
+            border-radius: 5px;
+            font-family: inherit;
+            margin: 10px;
+        }
+        button:hover { background: rgba(0, 255, 255, 0.2); }
+    </style>
+</head>
+<body>
+    <div class="demo-container">
+        <h1>🎮 VIB34D RHYTHM ROGUELIKE</h1>
+        <h2>System Check Demo</h2>
+
+        <div id="system-checks">
+            <div class="status pending" id="webgl-check">🔄 Checking WebGL support...</div>
+            <div class="status pending" id="audio-check">🔄 Checking Web Audio API...</div>
+            <div class="status pending" id="modules-check">🔄 Checking ES6 modules...</div>
+        </div>
+
+        <canvas id="test-canvas" width="400" height="300"></canvas>
+
+        <div>
+            <button onclick="testBasicVisualization()">Test Visualization</button>
+            <button onclick="testAudioContext()">Test Audio</button>
+        </div>
+
+        <div id="output"></div>
+    </div>
+
+    <script>
+        // System compatibility checks
+        function checkWebGL() {
+            const canvas = document.createElement('canvas');
+            const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+            const status = document.getElementById('webgl-check');
+
+            if (gl) {
+                status.className = 'status success';
+                status.textContent = '✅ WebGL supported';
+                return true;
+            } else {
+                status.className = 'status error';
+                status.textContent = '❌ WebGL not supported';
+                return false;
+            }
+        }
+
+        function checkAudioAPI() {
+            const status = document.getElementById('audio-check');
+
+            if (window.AudioContext || window.webkitAudioContext) {
+                status.className = 'status success';
+                status.textContent = '✅ Web Audio API supported';
+                return true;
+            } else {
+                status.className = 'status error';
+                status.textContent = '❌ Web Audio API not supported';
+                return false;
+            }
+        }
+
+        function checkModules() {
+            const status = document.getElementById('modules-check');
+
+            if (typeof import !== 'undefined') {
+                status.className = 'status success';
+                status.textContent = '✅ ES6 modules supported';
+                return true;
+            } else {
+                status.className = 'status error';
+                status.textContent = '❌ ES6 modules not supported';
+                return false;
+            }
+        }
+
+        function testBasicVisualization() {
+            const canvas = document.getElementById('test-canvas');
+            const ctx = canvas.getContext('2d');
+            const output = document.getElementById('output');
+
+            // Simple visualization test
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#000020';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw rotating geometry
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const time = Date.now() * 0.001;
+
+            // 4D projection simulation
+            for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2 + time;
+                const radius = 50 + 30 * Math.sin(time * 0.5);
+
+                const x = centerX + Math.cos(angle) * radius;
+                const y = centerY + Math.sin(angle) * radius;
+
+                ctx.beginPath();
+                ctx.arc(x, y, 5, 0, Math.PI * 2);
+                ctx.fillStyle = `hsl(${i * 45 + time * 50}, 80%, 60%)`;
+                ctx.fill();
+
+                // Connect to center
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.lineTo(x, y);
+                ctx.strokeStyle = `hsl(${i * 45 + time * 50}, 50%, 40%)`;
+                ctx.stroke();
+            }
+
+            output.innerHTML = '<div class="success">✅ Basic visualization test passed</div>';
+
+            // Continue animation
+            requestAnimationFrame(testBasicVisualization);
+        }
+
+        function testAudioContext() {
+            const output = document.getElementById('output');
+
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                const audioContext = new AudioContext();
+
+                // Create simple oscillator test
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+
+                oscillator.frequency.value = 440;
+                gainNode.gain.value = 0.1;
+
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+
+                output.innerHTML = '<div class="success">✅ Audio test passed - played 440Hz tone</div>';
+
+            } catch (error) {
+                output.innerHTML = `<div class="error">❌ Audio test failed: ${error.message}</div>`;
+            }
+        }
+
+        // Run checks on load
+        window.addEventListener('DOMContentLoaded', () => {
+            setTimeout(() => {
+                checkWebGL();
+                checkAudioAPI();
+                checkModules();
+            }, 500);
+        });
+    </script>
+</body>
+</html>
