@@ -153,6 +153,20 @@ Energy → visual feedback → Timing windows
 - Safari 12+
 - Mobile browsers with WebGL support
 
+## 📱 Mobile Experience
+
+- **Adaptive Profiles**: Auto-detects device tiers (flagship, performance, battery) and tunes render scale, shader density, and audio analysis fidelity accordingly.
+- **Touch Enhancements**: On-screen control center for graphics quality, haptics, and tilt steering toggles built for thumb-friendly access.
+- **Performance Telemetry**: Live FPS and audio latency readouts help players monitor headroom while the engine auto-balances detail.
+- **Orientation Awareness**: Smart overlay guides players to rotate into hyperwide landscape when needed.
+- **Session Persistence**: Remembers last audio source, stream URL, and preferred mobile settings across launches.
+
+## 🎆 Sensory Feedback Layer
+
+- **Beat Ripples & Pulse Rings**: Every beat spawns layered ripples, glowing pulse rings, and floating sync markers that reuse shared shaders for consistent motion language.
+- **HUD Micro-Animations**: Score bursts, combo surges, geometry sigils, and health shocks all draw from the same feedback director so every event gets 5–10 coordinated reactions without bespoke code per element.
+- **Ambient Telemetry**: Background gradients, combo trails, audio bars, and mobile callouts reference unified audio energy metrics—giving music, UI, and touch toggles a single vocabulary of color, motion, and sound cues.
+
 ## 🎵 Audio Support
 
 ### **Input Sources**
