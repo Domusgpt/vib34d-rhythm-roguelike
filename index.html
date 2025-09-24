@@ -10,6 +10,7 @@
     <div id="game-container">
         <!-- Main Game Canvas -->
         <canvas id="game-canvas"></canvas>
+        <div id="feedback-overlay" class="feedback-overlay"></div>
 
         <!-- HUD Overlay -->
         <div id="hud">
@@ -55,6 +56,57 @@
                 <div class="band mid" id="mid-band"></div>
                 <div class="band high" id="high-band"></div>
             </div>
+
+            <div class="resonance-overlay">
+                <div id="beat-rings" class="beat-rings-layer"></div>
+                <div id="telegraph-grid" class="telegraph-grid"></div>
+                <div id="cadence-orbit" class="cadence-orbit">
+                    <div class="orbit-track track-bass"></div>
+                    <div class="orbit-track track-mid"></div>
+                    <div class="orbit-track track-high"></div>
+                    <div class="orbit-dot dot-bass"></div>
+                    <div class="orbit-dot dot-mid"></div>
+                    <div class="orbit-dot dot-high"></div>
+                </div>
+                <div id="burst-trails" class="burst-trails"></div>
+                <div id="momentum-meter" class="momentum-meter">
+                    <div class="label">MOMENTUM</div>
+                    <div class="meter-track">
+                        <div class="meter-fill"></div>
+                        <div class="meter-glow"></div>
+                    </div>
+                    <div class="meter-value">0%</div>
+                </div>
+                <div id="event-feed" class="event-feed"></div>
+                <div id="status-flare-layer" class="status-flare-layer"></div>
+            </div>
+        </div>
+
+        <!-- Mobile Experience Layer -->
+        <div id="mobile-ux" class="mobile-ux">
+            <div class="status-row">
+                <div class="status-chip" id="mobile-performance-status">-- FPS</div>
+                <div class="status-chip">Latency: <span id="latency-value">interactive</span></div>
+            </div>
+            <div class="control-row">
+                <span class="row-label">Graphics</span>
+                <div class="chip-group">
+                    <button class="chip active" data-graphics-profile="auto">AUTO</button>
+                    <button class="chip" data-graphics-profile="battery">BATTERY</button>
+                    <button class="chip" data-graphics-profile="ultra">ULTRA</button>
+                </div>
+            </div>
+            <div class="control-row">
+                <span class="row-label">Touch Enhancements</span>
+                <div class="chip-group">
+                    <button class="chip" id="toggle-haptics">HAPTICS</button>
+                    <button class="chip active" id="toggle-tilt">TILT ✓</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="orientation-warning" class="orientation-warning hidden">
+            <span>Rotate for Hyperwide Mode</span>
         </div>
 
         <!-- Start Screen -->

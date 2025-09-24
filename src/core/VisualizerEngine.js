@@ -32,6 +32,7 @@ export class VisualizerEngine {
         // System switching state
         this.isInitialized = false;
         this.systemReady = false;
+        this.renderScale = Math.min(window.devicePixelRatio || 1, 1.5);
     }
 
     async initialize() {
@@ -216,22 +217,41 @@ export class VisualizerEngine {
     }
 
     handleResize(width, height) {
-        this.canvas.width = width;
-        this.canvas.height = height;
+        const scaledWidth = Math.max(1, Math.floor(width * this.renderScale));
+        const scaledHeight = Math.max(1, Math.floor(height * this.renderScale));
+
+        this.canvas.style.width = `${width}px`;
+        this.canvas.style.height = `${height}px`;
+        this.canvas.width = scaledWidth;
+        this.canvas.height = scaledHeight;
 
         if (this.gl) {
-            this.gl.viewport(0, 0, width, height);
+            this.gl.viewport(0, 0, scaledWidth, scaledHeight);
         }
 
         // Notify current system of resize
         const system = this.systems[this.currentSystem];
         if (system && typeof system.handleResize === 'function') {
-            system.handleResize(width, height);
+            system.handleResize(scaledWidth, scaledHeight);
         }
 
         if (this.canvasManager) {
             this.canvasManager.handleResize(width, height);
         }
+    }
+
+    setRenderScale(scale = 1) {
+        const clamped = Math.max(0.4, Math.min(scale, 2));
+        if (clamped === this.renderScale) return;
+        this.renderScale = clamped;
+        if (this.canvas) {
+            const rect = this.canvas.getBoundingClientRect();
+            this.handleResize(rect.width || this.canvas.width, rect.height || this.canvas.height);
+        }
+    }
+
+    getRenderScale() {
+        return this.renderScale;
     }
 
     // Game-specific methods for challenge generation

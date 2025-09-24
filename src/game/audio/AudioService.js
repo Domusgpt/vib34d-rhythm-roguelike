@@ -20,18 +20,33 @@ export class AudioService {
         this.energyHistory = [];
         this.historySize = 43; // ~0.7 seconds at 60fps
         this.metronomeEnabled = true;
+        this.latencyHint = 'interactive';
+        this.targetSampleRate = null;
+        this.qualityPreset = 'standard';
+        this.analysisSmoothing = 0.8;
+        this.volumeCeiling = 0.85;
     }
 
     async init() {
         if (this.context) return;
-        this.context = new (window.AudioContext || window.webkitAudioContext)();
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        const options = {};
+        if (this.latencyHint) options.latencyHint = this.latencyHint;
+        if (this.targetSampleRate) options.sampleRate = this.targetSampleRate;
+
+        try {
+            this.context = new AudioContextClass(options);
+        } catch (error) {
+            console.warn('Falling back to default AudioContext', error);
+            this.context = new AudioContextClass();
+        }
         this.analyser = this.context.createAnalyser();
         this.analyser.fftSize = this.fftSize;
-        this.analyser.smoothingTimeConstant = 0.8;
+        this.analyser.smoothingTimeConstant = this.analysisSmoothing;
         this.frequencyData = new Float32Array(this.analyser.frequencyBinCount);
         this.timeDomainData = new Float32Array(this.analyser.fftSize);
         this.gainNode = this.context.createGain();
-        this.gainNode.gain.value = 0.8;
+        this.gainNode.gain.value = this.volumeCeiling;
         this.analyser.connect(this.gainNode);
         this.gainNode.connect(this.context.destination);
     }
@@ -144,7 +159,8 @@ export class AudioService {
 
     setVolume(value) {
         if (this.gainNode) {
-            this.gainNode.gain.value = value;
+            const clamped = Math.max(0, Math.min(this.volumeCeiling, value));
+            this.gainNode.gain.value = clamped;
         }
     }
 
@@ -154,6 +170,67 @@ export class AudioService {
 
     enableMetronome(enabled) {
         this.metronomeEnabled = enabled;
+    }
+
+    setLatencyHint(latencyHint, sampleRate) {
+        this.latencyHint = latencyHint || this.latencyHint;
+        this.targetSampleRate = sampleRate ?? this.targetSampleRate;
+        if (this.context) {
+            this.rebuildAudioGraph();
+        }
+    }
+
+    async rebuildAudioGraph() {
+        if (!this.context) return this.init();
+
+        const wasPlaying = this.isPlaying;
+        const resumeOffset = this.isPlaying
+            ? this.context.currentTime - this.startTime
+            : this.pauseTime;
+
+        this.stop();
+
+        try {
+            await this.context.close();
+        } catch (error) {
+            console.warn('Failed to close AudioContext cleanly', error);
+        }
+
+        this.context = null;
+        await this.init();
+
+        if (this.trackBuffer) {
+            this.pauseTime = resumeOffset;
+            if (wasPlaying) {
+                this.play();
+            }
+        }
+    }
+
+    setQualityPreset(preset) {
+        const presets = {
+            ultra: { fftSize: 4096, smoothing: 0.7, gain: 0.95 },
+            mobile: { fftSize: 2048, smoothing: 0.8, gain: 0.85 },
+            battery: { fftSize: 1024, smoothing: 0.9, gain: 0.75 },
+            standard: { fftSize: 2048, smoothing: 0.8, gain: 0.85 }
+        };
+
+        const config = presets[preset] || presets.standard;
+        this.qualityPreset = preset || 'standard';
+        this.fftSize = config.fftSize;
+        this.analysisSmoothing = config.smoothing;
+        this.volumeCeiling = config.gain;
+
+        if (this.analyser) {
+            this.analyser.fftSize = this.fftSize;
+            this.analyser.smoothingTimeConstant = this.analysisSmoothing;
+            this.frequencyData = new Float32Array(this.analyser.frequencyBinCount);
+            this.timeDomainData = new Float32Array(this.analyser.fftSize);
+        }
+
+        if (this.gainNode) {
+            this.setVolume(this.gainNode.gain.value);
+        }
     }
 
     onBeat(callback) {
@@ -252,5 +329,56 @@ export class AudioService {
                 ? this.energyHistory[this.energyHistory.length - 1]
                 : 0
         };
+    }
+
+    playTransientAccent({ frequency = 440, intensity = 0.6, duration = 0.18, type = 'sine', sweep = 0 } = {}) {
+        if (!this.context || !this.gainNode) {
+            this.init?.().catch(() => {});
+        }
+        if (!this.context || !this.gainNode) {
+            return;
+        }
+
+        const now = this.context.currentTime;
+        const safeDuration = Math.max(0.05, duration);
+
+        if (type === 'noise') {
+            const length = Math.max(1, Math.floor(this.context.sampleRate * safeDuration));
+            const buffer = this.context.createBuffer(1, length, this.context.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < length; i++) {
+                const fade = 1 - i / length;
+                data[i] = (Math.random() * 2 - 1) * fade;
+            }
+            const source = this.context.createBufferSource();
+            source.buffer = buffer;
+            const gain = this.context.createGain();
+            const targetGain = Math.min(0.25, 0.05 + intensity * 0.15);
+            gain.gain.setValueAtTime(0.0001, now);
+            gain.gain.exponentialRampToValueAtTime(targetGain, now + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + safeDuration);
+            source.connect(gain);
+            gain.connect(this.gainNode);
+            source.start(now);
+            source.stop(now + safeDuration + 0.05);
+            return;
+        }
+
+        const osc = this.context.createOscillator();
+        osc.type = type;
+        osc.frequency.setValueAtTime(frequency, now);
+        if (sweep) {
+            osc.frequency.linearRampToValueAtTime(frequency + sweep, now + safeDuration);
+        }
+
+        const gain = this.context.createGain();
+        const peak = Math.min(0.2, 0.03 + intensity * 0.08);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(peak, now + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + safeDuration);
+        osc.connect(gain);
+        gain.connect(this.gainNode);
+        osc.start(now);
+        osc.stop(now + safeDuration + 0.05);
     }
 }
