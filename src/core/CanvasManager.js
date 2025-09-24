@@ -211,4 +211,44 @@ export class CanvasManager {
     
     return engine;
   }
+
+  /**
+   * Handle resize for all canvases in the current system
+   */
+  handleResize(width, height) {
+    if (!this.currentSystem) {
+      console.log('📐 No current system to resize');
+      return;
+    }
+
+    console.log(`📐 Resizing canvases for ${this.currentSystem}: ${width}x${height}`);
+
+    // Get canvas IDs for current system
+    const canvasIds = this.getCanvasIdsForSystem(this.currentSystem);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    canvasIds.forEach(canvasId => {
+      const canvas = document.getElementById(canvasId);
+      if (canvas) {
+        // Update canvas dimensions
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+
+        // Also notify WebGL context if it exists
+        const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+        if (gl) {
+          gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+      }
+    });
+
+    // Also resize the current engine if it has a handleResize method
+    if (this.currentEngine && typeof this.currentEngine.handleResize === 'function') {
+      this.currentEngine.handleResize(width, height);
+    }
+
+    console.log(`✅ Resized ${canvasIds.length} canvases for ${this.currentSystem}`);
+  }
 }
