@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIB34D Fixed Visualizers Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #000;
+            color: #0ff;
+            font-family: monospace;
+        }
+
+        h1 {
+            text-align: center;
+            color: #0ff;
+        }
+
+        .test-container {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .visualizer-test {
+            border: 2px solid #0ff;
+            padding: 10px;
+            margin: 10px;
+        }
+
+        .test-canvas {
+            width: 300px;
+            height: 300px;
+            background: #111;
+            border: 1px solid #333;
+        }
+
+        .controls {
+            margin: 20px;
+            padding: 10px;
+            border: 1px solid #333;
+        }
+
+        .control-group {
+            margin: 10px 0;
+        }
+
+        label {
+            display: inline-block;
+            width: 120px;
+            color: #0ff;
+        }
+
+        input {
+            background: #222;
+            color: #0ff;
+            border: 1px solid #333;
+            padding: 2px;
+        }
+
+        button {
+            background: #0ff;
+            color: #000;
+            border: none;
+            padding: 5px 10px;
+            margin: 2px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #fff;
+        }
+
+        .status {
+            margin: 10px;
+            padding: 10px;
+            border: 1px solid #333;
+            color: #0f0;
+        }
+
+        .error {
+            color: #f00;
+        }
+
+        .success {
+            color: #0f0;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔥💥 VIB34D FIXED VISUALIZERS TEST 💥🔥</h1>
+
+    <div class="status" id="status">
+        Testing fixed VIB34D visualizer system...
+    </div>
+
+    <div class="controls">
+        <h3>Test Controls</h3>
+        <button onclick="testQuantum()">Test Quantum Visualizer</button>
+        <button onclick="testHolographic()">Test Holographic Visualizer</button>
+        <button onclick="testParameters()">Test Parameter Manager</button>
+        <button onclick="testGeometryLib()">Test Geometry Library</button>
+    </div>
+
+    <div class="test-container">
+        <div class="visualizer-test">
+            <h3>Quantum Visualizer</h3>
+            <canvas id="quantum-canvas" class="test-canvas"></canvas>
+            <div>Status: <span id="quantum-status">Not tested</span></div>
+        </div>
+
+        <div class="visualizer-test">
+            <h3>Holographic Visualizer</h3>
+            <canvas id="holographic-canvas" class="test-canvas"></canvas>
+            <div>Status: <span id="holographic-status">Not tested</span></div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <h3>Parameter Testing</h3>
+        <div class="control-group">
+            <label>Geometry:</label>
+            <input type="range" id="geometry" min="0" max="7" value="0" oninput="updateParams()">
+            <span id="geometry-value">0</span>
+        </div>
+        <div class="control-group">
+            <label>Grid Density:</label>
+            <input type="range" id="gridDensity" min="5" max="50" value="15" oninput="updateParams()">
+            <span id="gridDensity-value">15</span>
+        </div>
+        <div class="control-group">
+            <label>Hue:</label>
+            <input type="range" id="hue" min="0" max="360" value="200" oninput="updateParams()">
+            <span id="hue-value">200</span>
+        </div>
+    </div>
+
+    <script type="module">
+        let quantumVisualizer = null;
+        let holographicVisualizer = null;
+        let parameterManager = null;
+
+        function log(message, type = 'info') {
+            const status = document.getElementById('status');
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'error' ? 'error' : (type === 'success' ? 'success' : '');
+            status.innerHTML = `<span class="${className}">[${timestamp}] ${message}</span><br>` + status.innerHTML;
+            console.log(`[${timestamp}] ${message}`);
+        }
+
+        // Test Quantum Visualizer
+        window.testQuantum = async function() {
+            log('Testing Quantum Visualizer...', 'info');
+            try {
+                const { QuantumHolographicVisualizer } = await import('./src/quantum/QuantumVisualizer.js');
+
+                quantumVisualizer = new QuantumHolographicVisualizer('quantum-canvas', 'content', 1.0, 0);
+
+                document.getElementById('quantum-status').textContent = 'Working';
+                document.getElementById('quantum-status').className = 'success';
+                log('✅ Quantum Visualizer loaded successfully!', 'success');
+
+                // Start render loop
+                const render = () => {
+                    if (quantumVisualizer) {
+                        quantumVisualizer.render();
+                        requestAnimationFrame(render);
+                    }
+                };
+                render();
+
+            } catch (error) {
+                document.getElementById('quantum-status').textContent = 'Error: ' + error.message;
+                document.getElementById('quantum-status').className = 'error';
+                log('❌ Quantum Visualizer failed: ' + error.message, 'error');
+                console.error('Quantum error:', error);
+            }
+        };
+
+        // Test Holographic Visualizer
+        window.testHolographic = async function() {
+            log('Testing Holographic Visualizer...', 'info');
+            try {
+                const { HolographicVisualizer } = await import('./src/holograms/HolographicVisualizer.js');
+
+                holographicVisualizer = new HolographicVisualizer('holographic-canvas', 'content', 1.0, 0);
+
+                document.getElementById('holographic-status').textContent = 'Working';
+                document.getElementById('holographic-status').className = 'success';
+                log('✅ Holographic Visualizer loaded successfully!', 'success');
+
+                // Start render loop
+                const render = () => {
+                    if (holographicVisualizer) {
+                        holographicVisualizer.render();
+                        requestAnimationFrame(render);
+                    }
+                };
+                render();
+
+            } catch (error) {
+                document.getElementById('holographic-status').textContent = 'Error: ' + error.message;
+                document.getElementById('holographic-status').className = 'error';
+                log('❌ Holographic Visualizer failed: ' + error.message, 'error');
+                console.error('Holographic error:', error);
+            }
+        };
+
+        // Test Parameter Manager
+        window.testParameters = async function() {
+            log('Testing Parameter Manager...', 'info');
+            try {
+                const { ParameterManager } = await import('./src/core/Parameters.js');
+
+                parameterManager = new ParameterManager();
+
+                // Test basic operations
+                parameterManager.setParameter('geometry', 2);
+                parameterManager.setParameter('hue', 300);
+
+                const params = parameterManager.getAllParameters();
+                log(`Parameter test: geometry=${params.geometry}, hue=${params.hue}`, 'success');
+
+                log('✅ Parameter Manager working correctly!', 'success');
+
+            } catch (error) {
+                log('❌ Parameter Manager failed: ' + error.message, 'error');
+                console.error('Parameter error:', error);
+            }
+        };
+
+        // Test Geometry Library
+        window.testGeometryLib = async function() {
+            log('Testing Geometry Library...', 'info');
+            try {
+                const { GeometryLibrary } = await import('./src/geometry/GeometryLibrary.js');
+
+                const names = GeometryLibrary.getGeometryNames();
+                const firstGeom = GeometryLibrary.getGeometryName(0);
+                const params = GeometryLibrary.getVariationParameters(1, 2);
+
+                log(`Geometry names: ${names.length} types, first: ${firstGeom}`, 'success');
+                log(`Variation params for type 1, level 2: density=${params.gridDensity}`, 'success');
+
+                log('✅ Geometry Library working correctly!', 'success');
+
+            } catch (error) {
+                log('❌ Geometry Library failed: ' + error.message, 'error');
+                console.error('Geometry error:', error);
+            }
+        };
+
+        // Update parameters
+        window.updateParams = function() {
+            if (!parameterManager) return;
+
+            const geometry = document.getElementById('geometry').value;
+            const gridDensity = document.getElementById('gridDensity').value;
+            const hue = document.getElementById('hue').value;
+
+            document.getElementById('geometry-value').textContent = geometry;
+            document.getElementById('gridDensity-value').textContent = gridDensity;
+            document.getElementById('hue-value').textContent = hue;
+
+            const params = {
+                geometry: parseInt(geometry),
+                gridDensity: parseFloat(gridDensity),
+                hue: parseInt(hue)
+            };
+
+            parameterManager.setParameters(params);
+
+            // Update visualizers if they exist
+            if (quantumVisualizer) {
+                quantumVisualizer.updateParameters(params);
+            }
+            if (holographicVisualizer) {
+                holographicVisualizer.updateParameters(params);
+            }
+        };
+
+        // Auto-run tests on load
+        window.addEventListener('load', () => {
+            log('🚀 VIB34D Visualizer Test Suite Started', 'info');
+
+            setTimeout(() => {
+                testParameters();
+            }, 500);
+
+            setTimeout(() => {
+                testGeometryLib();
+            }, 1000);
+
+            setTimeout(() => {
+                testQuantum();
+            }, 1500);
+
+            setTimeout(() => {
+                testHolographic();
+            }, 2000);
+        });
+
+    </script>
+</body>
+</html>

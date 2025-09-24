@@ -3,9 +3,9 @@
  * Integrates all 4D visualization systems for the rhythm game
  */
 
-import { Engine as FacetedEngine } from './Engine.js';
-import { QuantumEngine } from '../quantum/QuantumEngine.js';
-import { RealHolographicSystem as HolographicEngine } from '../holograms/RealHolographicSystem.js';
+import { VIB34DIntegratedEngine as FacetedEngine } from './Engine.js';
+import { QuantumHolographicVisualizer as QuantumEngine } from '../quantum/QuantumVisualizer.js';
+import { HolographicVisualizer as HolographicEngine } from '../holograms/HolographicVisualizer.js';
 import { PolychoraSystem } from './PolychoraSystem.js';
 import { HypercubeGameSystem } from '../visualizers/HypercubeGameSystem.js';
 import { CanvasManager } from './CanvasManager.js';

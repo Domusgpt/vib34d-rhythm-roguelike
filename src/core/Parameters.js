@@ -1,259 +1,201 @@
 /**
- * VIB34D Parameter Management System
- * Unified parameter control for both holographic and polytopal systems
+ * VIB34D Parameter Management System - Working Implementation
+ * Extracted from the actual working VIB34D system at visual-codex-enhanced/demos/noise-machine
  */
 
 export class ParameterManager {
     constructor() {
-        // Default parameter set combining both systems
-        this.params = {
-            // Current variation
-            variation: 0,
-            
-            // 4D Polytopal Mathematics
-            rot4dXW: 0.0,      // X-W plane rotation (-2 to 2)
-            rot4dYW: 0.0,      // Y-W plane rotation (-2 to 2) 
-            rot4dZW: 0.0,      // Z-W plane rotation (-2 to 2)
-            dimension: 3.5,    // Dimensional level (3.0 to 4.5)
-            
-            // Holographic Visualization
-            gridDensity: 15,   // Geometric detail (4 to 30)
-            morphFactor: 1.0,  // Shape transformation (0 to 2)
-            chaos: 0.2,        // Randomization level (0 to 1)
-            speed: 1.0,        // Animation speed (0.1 to 3)
-            hue: 200,          // Color rotation (0 to 360)
-            intensity: 0.5,    // Visual intensity (0 to 1)
-            saturation: 0.8,   // Color saturation (0 to 1)
-            
-            // Geometry selection
-            geometry: 0        // Current geometry type (0-7)
+        // Base parameters - core VIB34D system values
+        this.baseParams = {
+            geometry: 0,
+            gridDensity: 15,
+            morphFactor: 1.0,
+            chaos: 0.2,
+            speed: 1.0,
+            hue: 200,
+            intensity: 0.5,
+            saturation: 0.8,
+            dimension: 3.5,
+            rot4dXW: 0.0,
+            rot4dYW: 0.0,
+            rot4dZW: 0.0
         };
-        
-        // Parameter definitions for validation and UI
+
+        // Audio reactive modulation values
+        this.audioModulation = {
+            rot4dXW: 0.0,
+            rot4dYW: 0.0,
+            rot4dZW: 0.0,
+            gridDensity: 0.0,
+            morphFactor: 0.0,
+            chaos: 0.0,
+            hue: 0.0,
+            intensity: 0.0
+        };
+
+        // Current audio reactive state
+        this.audioReactive = {
+            enabled: false,
+            frequency: 440, // Current frequency in Hz
+            cutoff: 1000,   // Current filter cutoff in Hz
+            amplitude: 0.0  // Current amplitude 0-1
+        };
+
+        // Final computed parameters (base + audio modulation)
+        this.finalParams = { ...this.baseParams };
+
+        // Parameter definitions for validation
         this.parameterDefs = {
-            variation: { min: 0, max: 99, step: 1, type: 'int' },
-            rot4dXW: { min: -2, max: 2, step: 0.01, type: 'float' },
-            rot4dYW: { min: -2, max: 2, step: 0.01, type: 'float' },
-            rot4dZW: { min: -2, max: 2, step: 0.01, type: 'float' },
-            dimension: { min: 3.0, max: 4.5, step: 0.01, type: 'float' },
-            gridDensity: { min: 4, max: 100, step: 0.1, type: 'float' },
+            geometry: { min: 0, max: 7, step: 1, type: 'int' },
+            gridDensity: { min: 5, max: 100, step: 0.1, type: 'float' },
             morphFactor: { min: 0, max: 2, step: 0.01, type: 'float' },
             chaos: { min: 0, max: 1, step: 0.01, type: 'float' },
             speed: { min: 0.1, max: 3, step: 0.01, type: 'float' },
             hue: { min: 0, max: 360, step: 1, type: 'int' },
             intensity: { min: 0, max: 1, step: 0.01, type: 'float' },
             saturation: { min: 0, max: 1, step: 0.01, type: 'float' },
-            geometry: { min: 0, max: 7, step: 1, type: 'int' }
+            dimension: { min: 3.0, max: 4.5, step: 0.01, type: 'float' },
+            rot4dXW: { min: -2, max: 2, step: 0.01, type: 'float' },
+            rot4dYW: { min: -2, max: 2, step: 0.01, type: 'float' },
+            rot4dZW: { min: -2, max: 2, step: 0.01, type: 'float' }
         };
-        
-        // Default parameter backup for reset
-        this.defaults = { ...this.params };
     }
-    
+
     /**
-     * Get all current parameters
-     */
-    getAllParameters() {
-        return { ...this.params };
-    }
-    
-    /**
-     * Set a specific parameter with validation
+     * Set base parameter value with validation
      */
     setParameter(name, value) {
         if (this.parameterDefs[name]) {
             const def = this.parameterDefs[name];
-            
+
             // Clamp value to valid range
             value = Math.max(def.min, Math.min(def.max, value));
-            
+
             // Apply type conversion
             if (def.type === 'int') {
                 value = Math.round(value);
             }
-            
-            this.params[name] = value;
+
+            this.baseParams[name] = value;
+            this.computeFinalParameters();
             return true;
         }
-        
+
         console.warn(`Unknown parameter: ${name}`);
         return false;
     }
-    
+
     /**
      * Set multiple parameters at once
      */
-    setParameters(paramObj) {
-        for (const [name, value] of Object.entries(paramObj)) {
-            this.setParameter(name, value);
+    setParameters(params) {
+        for (const [name, value] of Object.entries(params)) {
+            if (this.baseParams.hasOwnProperty(name)) {
+                this.setParameter(name, value);
+            }
         }
     }
-    
+
     /**
-     * Get a specific parameter value
+     * Get current parameter value (base + audio modulation)
      */
     getParameter(name) {
-        return this.params[name];
+        return this.finalParams[name] !== undefined ? this.finalParams[name] : this.baseParams[name];
     }
-    
+
     /**
-     * Set geometry type with validation
+     * Get all final parameters (for rendering)
      */
-    setGeometry(geometryType) {
-        this.setParameter('geometry', geometryType);
+    getAllParameters() {
+        return { ...this.finalParams };
     }
-    
+
     /**
-     * Update parameters from UI controls
+     * Get base parameters (without audio modulation)
      */
-    updateFromControls() {
-        const controlIds = [
-            'variationSlider', 'rot4dXW', 'rot4dYW', 'rot4dZW', 'dimension',
-            'gridDensity', 'morphFactor', 'chaos', 'speed', 'hue'
-        ];
-        
-        controlIds.forEach(id => {
-            const element = document.getElementById(id);
-            if (element) {
-                const value = parseFloat(element.value);
-                
-                // Map slider IDs to parameter names
-                let paramName = id;
-                if (id === 'variationSlider') {
-                    paramName = 'variation';
-                }
-                
-                this.setParameter(paramName, value);
-            }
-        });
+    getBaseParameters() {
+        return { ...this.baseParams };
     }
-    
+
     /**
-     * Update UI display values from current parameters
+     * Update audio reactive state
      */
-    updateDisplayValues() {
-        // Update slider values
-        this.updateSliderValue('variationSlider', this.params.variation);
-        this.updateSliderValue('rot4dXW', this.params.rot4dXW);
-        this.updateSliderValue('rot4dYW', this.params.rot4dYW);
-        this.updateSliderValue('rot4dZW', this.params.rot4dZW);
-        this.updateSliderValue('dimension', this.params.dimension);
-        this.updateSliderValue('gridDensity', this.params.gridDensity);
-        this.updateSliderValue('morphFactor', this.params.morphFactor);
-        this.updateSliderValue('chaos', this.params.chaos);
-        this.updateSliderValue('speed', this.params.speed);
-        this.updateSliderValue('hue', this.params.hue);
-        
-        // Update display texts
-        this.updateDisplayText('rot4dXWDisplay', this.params.rot4dXW.toFixed(2));
-        this.updateDisplayText('rot4dYWDisplay', this.params.rot4dYW.toFixed(2));
-        this.updateDisplayText('rot4dZWDisplay', this.params.rot4dZW.toFixed(2));
-        this.updateDisplayText('dimensionDisplay', this.params.dimension.toFixed(2));
-        this.updateDisplayText('gridDensityDisplay', this.params.gridDensity.toFixed(1));
-        this.updateDisplayText('morphFactorDisplay', this.params.morphFactor.toFixed(2));
-        this.updateDisplayText('chaosDisplay', this.params.chaos.toFixed(2));
-        this.updateDisplayText('speedDisplay', this.params.speed.toFixed(2));
-        this.updateDisplayText('hueDisplay', this.params.hue + '°');
-        
-        // Update variation info
-        this.updateVariationInfo();
-        
-        // Update geometry preset buttons
-        this.updateGeometryButtons();
-    }
-    
-    updateSliderValue(id, value) {
-        const element = document.getElementById(id);
-        if (element) {
-            element.value = value;
+    updateAudioReactive(frequency, cutoff, amplitude) {
+        this.audioReactive.frequency = frequency;
+        this.audioReactive.cutoff = cutoff;
+        this.audioReactive.amplitude = amplitude;
+
+        if (this.audioReactive.enabled) {
+            this.updateAudioReactiveParams();
         }
     }
-    
-    updateDisplayText(id, text) {
-        const element = document.getElementById(id);
-        if (element) {
-            element.textContent = text;
+
+    /**
+     * Enable/disable audio reactivity
+     */
+    setAudioReactive(enabled) {
+        this.audioReactive.enabled = enabled;
+        if (!enabled) {
+            // Clear audio modulation
+            Object.keys(this.audioModulation).forEach(key => {
+                this.audioModulation[key] = 0.0;
+            });
         }
+        this.computeFinalParameters();
     }
-    
-    updateVariationInfo() {
-        const variationDisplay = document.getElementById('currentVariationDisplay');
-        if (variationDisplay) {
-            const geometryNames = [
-                'TETRAHEDRON LATTICE', 'HYPERCUBE LATTICE', 'SPHERE LATTICE', 'TORUS LATTICE',
-                'KLEIN BOTTLE LATTICE', 'FRACTAL LATTICE', 'WAVE LATTICE', 'CRYSTAL LATTICE'
-            ];
-            
-            const geometryType = Math.floor(this.params.variation / 4);
-            const geometryLevel = (this.params.variation % 4) + 1;
-            const geometryName = geometryNames[geometryType] || 'CUSTOM VARIATION';
-            
-            variationDisplay.textContent = `${this.params.variation + 1} - ${geometryName}`;
-            
-            if (this.params.variation < 30) {
-                variationDisplay.textContent += ` ${geometryLevel}`;
-            }
-        }
-    }
-    
-    updateGeometryButtons() {
-        document.querySelectorAll('[data-geometry]').forEach(btn => {
-            btn.classList.toggle('active', parseInt(btn.dataset.geometry) === this.params.geometry);
-        });
-    }
-    
+
     /**
-     * Randomize all parameters
+     * Update audio reactive parameter modulations
      */
-    randomizeAll() {
-        this.params.rot4dXW = Math.random() * 4 - 2;
-        this.params.rot4dYW = Math.random() * 4 - 2;
-        this.params.rot4dZW = Math.random() * 4 - 2;
-        this.params.dimension = 3.0 + Math.random() * 1.5;
-        this.params.gridDensity = 4 + Math.random() * 26;
-        this.params.morphFactor = Math.random() * 2;
-        this.params.chaos = Math.random();
-        this.params.speed = 0.1 + Math.random() * 2.9;
-        this.params.hue = Math.random() * 360;
-        this.params.geometry = Math.floor(Math.random() * 8);
+    updateAudioReactiveParams() {
+        if (!this.audioReactive.enabled) return;
+
+        // Normalize frequency and cutoff to 0-1 range
+        const freqNorm = Math.max(0, Math.min(1, (this.audioReactive.frequency - 200) / 1800)); // 200Hz-2000Hz
+        const cutoffNorm = Math.max(0, Math.min(1, (this.audioReactive.cutoff - 150) / 4850)); // 150Hz-5000Hz
+
+        // Map audio parameters to visual modulations
+        this.audioModulation.rot4dXW = (freqNorm - 0.5) * 0.5; // Frequency affects XW rotation
+        this.audioModulation.rot4dYW = (cutoffNorm - 0.5) * 0.3; // Cutoff affects YW rotation
+        this.audioModulation.rot4dZW = this.audioReactive.amplitude * 0.4; // Amplitude affects ZW rotation
+
+        this.audioModulation.gridDensity = freqNorm * 20; // Higher frequency = denser grid
+        this.audioModulation.morphFactor = cutoffNorm * 0.5; // Filter affects morphing
+        this.audioModulation.chaos = this.audioReactive.amplitude * 0.3; // Amplitude adds chaos
+
+        this.audioModulation.hue = freqNorm * 60; // Frequency shifts hue
+        this.audioModulation.intensity = this.audioReactive.amplitude * 0.3; // Amplitude affects brightness
+
+        this.computeFinalParameters();
     }
-    
+
     /**
-     * Reset to default parameters
+     * Compute final parameters (base + audio modulation)
      */
-    resetToDefaults() {
-        this.params = { ...this.defaults };
-    }
-    
-    /**
-     * Load parameter configuration
-     */
-    loadConfiguration(config) {
-        if (config && typeof config === 'object') {
-            // Validate and apply configuration
-            for (const [key, value] of Object.entries(config)) {
+    computeFinalParameters() {
+        Object.keys(this.baseParams).forEach(key => {
+            let finalValue = this.baseParams[key];
+
+            // Add audio modulation if available
+            if (this.audioModulation[key] !== undefined) {
+                finalValue += this.audioModulation[key];
+
+                // Clamp to valid range
                 if (this.parameterDefs[key]) {
-                    this.setParameter(key, value);
+                    const def = this.parameterDefs[key];
+                    finalValue = Math.max(def.min, Math.min(def.max, finalValue));
+
+                    // Apply type conversion for final value
+                    if (def.type === 'int') {
+                        finalValue = Math.round(finalValue);
+                    }
                 }
             }
-            return true;
-        }
-        return false;
+
+            this.finalParams[key] = finalValue;
+        });
     }
-    
-    /**
-     * Export current configuration
-     */
-    exportConfiguration() {
-        return {
-            type: 'vib34d-integrated-config',
-            version: '1.0.0',
-            timestamp: new Date().toISOString(),
-            name: `VIB34D Config ${new Date().toLocaleDateString()}`,
-            parameters: { ...this.params }
-        };
-    }
-    
+
     /**
      * Generate variation-specific parameters
      */
@@ -262,110 +204,148 @@ export class ParameterManager {
             // Default variations with consistent patterns
             const geometryType = Math.floor(variationIndex / 4);
             const level = variationIndex % 4;
-            
+
             return {
                 geometry: geometryType,
-                gridDensity: 8 + (level * 4),
-                morphFactor: 0.5 + (level * 0.3),
-                chaos: level * 0.15,
-                speed: 0.8 + (level * 0.2),
-                hue: (geometryType * 45 + level * 15) % 360,
-                rot4dXW: (level - 1.5) * 0.5,
-                rot4dYW: (geometryType % 2) * 0.3,
-                rot4dZW: ((geometryType + level) % 3) * 0.2,
-                dimension: 3.2 + (level * 0.2)
+                gridDensity: 8 + geometryType * 2 + level * 1.5,
+                morphFactor: 0.2 + level * 0.2,
+                chaos: level * 0.2,
+                speed: 0.8 + level * 0.2,
+                hue: (variationIndex * 12.27) % 360,
+                intensity: 0.5 + level * 0.1,
+                saturation: 0.8,
+                rot4dXW: (level - 1.5) * 0.3,
+                rot4dYW: (geometryType % 2) * 0.2,
+                rot4dZW: ((geometryType + level) % 3) * 0.15,
+                dimension: 3.2 + level * 0.2
             };
         } else {
-            // Custom variations - return current parameters
-            return { ...this.params };
+            // Custom variations - return current base parameters
+            return { ...this.baseParams };
         }
     }
-    
+
     /**
-     * Apply variation to current parameters
+     * Apply variation to base parameters
      */
     applyVariation(variationIndex) {
         const variationParams = this.generateVariationParameters(variationIndex);
         this.setParameters(variationParams);
-        this.params.variation = variationIndex;
     }
-    
+
     /**
-     * Get HSV color values for current hue
+     * Reset to default parameters
      */
-    getColorHSV() {
+    resetToDefaults() {
+        this.baseParams = {
+            geometry: 0,
+            gridDensity: 15,
+            morphFactor: 1.0,
+            chaos: 0.2,
+            speed: 1.0,
+            hue: 200,
+            intensity: 0.5,
+            saturation: 0.8,
+            dimension: 3.5,
+            rot4dXW: 0.0,
+            rot4dYW: 0.0,
+            rot4dZW: 0.0
+        };
+        this.computeFinalParameters();
+    }
+
+    /**
+     * Randomize all base parameters
+     */
+    randomizeAll() {
+        this.baseParams.geometry = Math.floor(Math.random() * 8);
+        this.baseParams.gridDensity = 5 + Math.random() * 95;
+        this.baseParams.morphFactor = Math.random() * 2;
+        this.baseParams.chaos = Math.random();
+        this.baseParams.speed = 0.1 + Math.random() * 2.9;
+        this.baseParams.hue = Math.random() * 360;
+        this.baseParams.intensity = Math.random();
+        this.baseParams.saturation = 0.5 + Math.random() * 0.5; // Keep saturation reasonable
+        this.baseParams.dimension = 3.0 + Math.random() * 1.5;
+        this.baseParams.rot4dXW = Math.random() * 4 - 2;
+        this.baseParams.rot4dYW = Math.random() * 4 - 2;
+        this.baseParams.rot4dZW = Math.random() * 4 - 2;
+
+        this.computeFinalParameters();
+    }
+
+    /**
+     * Export current configuration
+     */
+    exportConfiguration() {
         return {
-            h: this.params.hue,
-            s: 0.8, // Fixed saturation
-            v: 0.9  // Fixed value
+            type: 'vib34d-parameters',
+            version: '1.0.0',
+            timestamp: new Date().toISOString(),
+            baseParameters: { ...this.baseParams },
+            audioReactive: { ...this.audioReactive }
         };
     }
-    
+
     /**
-     * Get RGB color values for current hue
+     * Load parameter configuration
+     */
+    loadConfiguration(config) {
+        if (config && config.type === 'vib34d-parameters' && config.baseParameters) {
+            this.setParameters(config.baseParameters);
+
+            if (config.audioReactive) {
+                this.audioReactive = { ...this.audioReactive, ...config.audioReactive };
+            }
+
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Get geometry name for display
+     */
+    getGeometryName(geometryType = null) {
+        const type = geometryType !== null ? geometryType : this.finalParams.geometry;
+        const names = [
+            'TETRAHEDRON', 'HYPERCUBE', 'SPHERE', 'TORUS',
+            'KLEIN BOTTLE', 'FRACTAL', 'WAVE', 'CRYSTAL'
+        ];
+        return names[type] || 'UNKNOWN';
+    }
+
+    /**
+     * HSV to RGB color conversion
      */
     getColorRGB() {
-        const hsv = this.getColorHSV();
-        return this.hsvToRgb(hsv.h, hsv.s, hsv.v);
-    }
-    
-    /**
-     * Convert HSV to RGB
-     */
-    hsvToRgb(h, s, v) {
-        h = h / 60;
-        const c = v * s;
-        const x = c * (1 - Math.abs((h % 2) - 1));
-        const m = v - c;
-        
+        const hue = this.finalParams.hue % 360;
+        const saturation = this.finalParams.saturation;
+        const value = this.finalParams.intensity;
+
+        const c = value * saturation;
+        const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+        const m = value - c;
+
         let r, g, b;
-        if (h < 1) {
+        if (hue >= 0 && hue < 60) {
             [r, g, b] = [c, x, 0];
-        } else if (h < 2) {
+        } else if (hue >= 60 && hue < 120) {
             [r, g, b] = [x, c, 0];
-        } else if (h < 3) {
+        } else if (hue >= 120 && hue < 180) {
             [r, g, b] = [0, c, x];
-        } else if (h < 4) {
+        } else if (hue >= 180 && hue < 240) {
             [r, g, b] = [0, x, c];
-        } else if (h < 5) {
+        } else if (hue >= 240 && hue < 300) {
             [r, g, b] = [x, 0, c];
         } else {
             [r, g, b] = [c, 0, x];
         }
-        
+
         return {
             r: Math.round((r + m) * 255),
             g: Math.round((g + m) * 255),
             b: Math.round((b + m) * 255)
         };
-    }
-    
-    /**
-     * Validate parameter configuration
-     */
-    validateConfiguration(config) {
-        if (!config || typeof config !== 'object') {
-            return { valid: false, error: 'Configuration must be an object' };
-        }
-        
-        if (config.type !== 'vib34d-integrated-config') {
-            return { valid: false, error: 'Invalid configuration type' };
-        }
-        
-        if (!config.parameters) {
-            return { valid: false, error: 'Missing parameters object' };
-        }
-        
-        // Validate individual parameters
-        for (const [key, value] of Object.entries(config.parameters)) {
-            if (this.parameterDefs[key]) {
-                const def = this.parameterDefs[key];
-                if (typeof value !== 'number' || value < def.min || value > def.max) {
-                    return { valid: false, error: `Invalid value for parameter ${key}: ${value}` };
-                }
-            }
-        }
-        
-        return { valid: true };
     }
 }
