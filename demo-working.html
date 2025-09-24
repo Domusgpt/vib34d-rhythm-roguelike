@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIB34D Working Demo</title>
+    <style>
+        body {
+            margin: 0;
+            background: radial-gradient(circle, #001122 0%, #000000 100%);
+            font-family: 'Courier New', monospace;
+            color: #00ffff;
+            overflow: hidden;
+        }
+
+        #gameCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            background: linear-gradient(45deg, #000011 25%, transparent 25%),
+                        linear-gradient(-45deg, #000011 25%, transparent 25%),
+                        linear-gradient(45deg, transparent 75%, #000011 75%),
+                        linear-gradient(-45deg, transparent 75%, #000011 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+
+        .hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(0, 255, 255, 0.1);
+            padding: 15px;
+            border: 2px solid #00ffff;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            text-align: center;
+        }
+
+        .control-btn {
+            background: linear-gradient(45deg, #ff0080, #0080ff);
+            border: none;
+            color: white;
+            padding: 15px 25px;
+            margin: 5px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: bold;
+            text-shadow: 0 0 10px currentColor;
+            box-shadow: 0 0 20px rgba(255, 0, 128, 0.5);
+            transition: all 0.3s ease;
+        }
+
+        .control-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 30px rgba(255, 0, 128, 0.8);
+        }
+
+        .title {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 50;
+            font-size: 3em;
+            font-weight: bold;
+            text-shadow: 0 0 20px #00ffff, 0 0 40px #ff0080;
+            animation: glow 2s ease-in-out infinite alternate;
+        }
+
+        @keyframes glow {
+            from { text-shadow: 0 0 20px #00ffff, 0 0 40px #ff0080; }
+            to { text-shadow: 0 0 30px #ff0080, 0 0 60px #00ffff; }
+        }
+
+        .effect {
+            position: absolute;
+            pointer-events: none;
+            border-radius: 50%;
+            animation: explode 1s ease-out forwards;
+        }
+
+        @keyframes explode {
+            from {
+                transform: scale(0) rotate(0deg);
+                opacity: 1;
+                filter: blur(0px);
+            }
+            to {
+                transform: scale(3) rotate(360deg);
+                opacity: 0;
+                filter: blur(5px);
+            }
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0px); }
+            10% { transform: translateX(-5px); }
+            20% { transform: translateX(5px); }
+            30% { transform: translateX(-3px); }
+            40% { transform: translateX(3px); }
+            50% { transform: translateX(-2px); }
+            60% { transform: translateX(2px); }
+            70% { transform: translateX(-1px); }
+            80% { transform: translateX(1px); }
+            90% { transform: translateX(0px); }
+        }
+
+        .shake { animation: shake 0.5s ease-in-out; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="hud">
+        <div>🔥💥 VIB34D RHYTHM ROGUELIKE 💥🔥</div>
+        <div>Score: <span id="score">0</span></div>
+        <div>Combo: <span id="combo">0x</span></div>
+        <div>Level: <span id="level">1</span></div>
+        <div>Health: <span id="health">100</span>%</div>
+    </div>
+
+    <div class="title" id="title">
+        🌟💫 VIB34D 💫🌟<br>
+        <div style="font-size: 0.5em; margin-top: 10px;">ULTRA BOMBASTIC DEMO</div>
+    </div>
+
+    <div class="controls">
+        <div style="margin-bottom: 10px; font-size: 1.2em;">🎮 BOMBASTIC TEST CONTROLS 🎮</div>
+        <button class="control-btn" onclick="testEffect('beat')">1: BEAT 🎵💥</button>
+        <button class="control-btn" onclick="testEffect('combo')">2: COMBO 🔥✨</button>
+        <button class="control-btn" onclick="testEffect('damage')">3: DAMAGE 💥⚡</button>
+        <button class="control-btn" onclick="testEffect('powerup')">4: POWER-UP ⭐💫</button>
+        <button class="control-btn" onclick="testEffect('levelup')">5: LEVEL UP 🚀🌟</button>
+        <button class="control-btn" onclick="testEffect('perfect')">6: PERFECT HIT 💫✨</button>
+        <button class="control-btn" onclick="testEffect('boss')">7: BOSS MODE 🐲🌌</button>
+    </div>
+
+    <script>
+        // 🔥💥 ULTRA BOMBASTIC DEMO SYSTEM 💥🔥
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game state
+        let score = 0;
+        let combo = 0;
+        let level = 1;
+        let health = 100;
+        let effects = [];
+
+        // Resize canvas
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // 🎨 BOMBASTIC VISUAL EFFECTS SYSTEM
+        function createExplosion(x, y, color, size = 50) {
+            const effect = document.createElement('div');
+            effect.className = 'effect';
+            effect.style.cssText = `
+                left: ${x - size/2}px;
+                top: ${y - size/2}px;
+                width: ${size}px;
+                height: ${size}px;
+                background: radial-gradient(circle, ${color} 0%, transparent 70%);
+                box-shadow: 0 0 ${size}px ${color};
+            `;
+
+            document.body.appendChild(effect);
+
+            setTimeout(() => {
+                effect.remove();
+            }, 1000);
+        }
+
+        function shakeScreen() {
+            document.body.classList.add('shake');
+            setTimeout(() => {
+                document.body.classList.remove('shake');
+            }, 500);
+        }
+
+        function vibrate(pattern) {
+            if (navigator.vibrate) {
+                navigator.vibrate(pattern);
+            }
+        }
+
+        function playSound(frequency, duration) {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+
+                oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+                oscillator.type = 'sine';
+
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + duration);
+            } catch (e) {
+                console.log('Audio not available');
+            }
+        }
+
+        // 🎮 BOMBASTIC TEST EFFECTS
+        function testEffect(type) {
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+
+            switch(type) {
+                case 'beat':
+                    console.log('🎵💥 BEAT EXPLOSION!');
+                    createExplosion(centerX, centerY, '#ff0080', 100);
+                    shakeScreen();
+                    vibrate([80]);
+                    playSound(440, 0.2);
+                    score += 100;
+                    break;
+
+                case 'combo':
+                    console.log('🔥✨ COMBO FIREWORKS!');
+                    combo++;
+                    for(let i = 0; i < 5; i++) {
+                        setTimeout(() => {
+                            createExplosion(
+                                centerX + (Math.random() - 0.5) * 200,
+                                centerY + (Math.random() - 0.5) * 200,
+                                '#00ff88',
+                                60
+                            );
+                        }, i * 100);
+                    }
+                    vibrate([40, 20, 40, 20, 40]);
+                    playSound(880, 0.3);
+                    score += combo * 50;
+                    break;
+
+                case 'damage':
+                    console.log('💥⚡ DAMAGE SHOCKWAVE!');
+                    createExplosion(centerX, centerY, '#ff4444', 120);
+                    shakeScreen();
+                    vibrate([150, 50, 150]);
+                    playSound(220, 0.3);
+                    health = Math.max(0, health - 15);
+                    break;
+
+                case 'powerup':
+                    console.log('⭐💫 POWER-UP NOVA!');
+                    createExplosion(centerX, centerY, '#ffff00', 80);
+                    vibrate([100, 50, 150, 50, 200]);
+                    playSound(1320, 0.4);
+                    score += 1000;
+                    health = Math.min(100, health + 10);
+                    break;
+
+                case 'levelup':
+                    console.log('🚀🌟 LEVEL TRANSCENDENCE!');
+                    level++;
+                    for(let i = 0; i < 8; i++) {
+                        setTimeout(() => {
+                            createExplosion(
+                                centerX + Math.cos(i * 45 * Math.PI / 180) * 100,
+                                centerY + Math.sin(i * 45 * Math.PI / 180) * 100,
+                                '#8844ff',
+                                70
+                            );
+                        }, i * 50);
+                    }
+                    vibrate([200, 150, 250, 150, 300]);
+                    playSound(660, 0.6);
+                    score += 2000;
+                    combo = 0;
+                    health = Math.min(100, health + 25);
+                    break;
+
+                case 'perfect':
+                    console.log('💫✨ PERFECT HIT TRANSCENDENCE!');
+                    createExplosion(centerX, centerY, '#00ddff', 150);
+                    for(let i = 0; i < 12; i++) {
+                        setTimeout(() => {
+                            createExplosion(
+                                centerX + Math.cos(i * 30 * Math.PI / 180) * 80,
+                                centerY + Math.sin(i * 30 * Math.PI / 180) * 80,
+                                '#00ddff',
+                                30
+                            );
+                        }, i * 30);
+                    }
+                    vibrate([100, 50, 150, 50, 200]);
+                    playSound(1760, 0.5);
+                    score += 5000;
+                    break;
+
+                case 'boss':
+                    console.log('🐲🌌 BOSS REALITY RIFT!');
+                    document.body.style.background = 'radial-gradient(circle, #220011 0%, #110000 100%)';
+                    createExplosion(centerX, centerY, '#ff00ff', 200);
+                    shakeScreen();
+                    setTimeout(() => {
+                        document.body.style.background = 'radial-gradient(circle, #001122 0%, #000000 100%)';
+                    }, 2000);
+                    vibrate([200, 150, 250, 150, 300, 150, 350]);
+                    playSound(110, 0.8);
+                    break;
+            }
+
+            updateHUD();
+        }
+
+        function updateHUD() {
+            document.getElementById('score').textContent = score.toLocaleString();
+            document.getElementById('combo').textContent = combo + 'x';
+            document.getElementById('level').textContent = level;
+            document.getElementById('health').textContent = health;
+        }
+
+        // 🌟 ANIMATED BACKGROUND
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw animated grid
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.2)';
+            ctx.lineWidth = 1;
+
+            const time = Date.now() * 0.001;
+            const gridSize = 50 + Math.sin(time) * 10;
+
+            for(let x = 0; x < canvas.width; x += gridSize) {
+                for(let y = 0; y < canvas.height; y += gridSize) {
+                    const alpha = (Math.sin(time + x * 0.01 + y * 0.01) + 1) * 0.5;
+                    ctx.globalAlpha = alpha * 0.3;
+                    ctx.strokeRect(x, y, gridSize, gridSize);
+                }
+            }
+
+            ctx.globalAlpha = 1;
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            switch(e.key) {
+                case '1': testEffect('beat'); break;
+                case '2': testEffect('combo'); break;
+                case '3': testEffect('damage'); break;
+                case '4': testEffect('powerup'); break;
+                case '5': testEffect('levelup'); break;
+                case '6': testEffect('perfect'); break;
+                case '7': testEffect('boss'); break;
+            }
+        });
+
+        console.log('🔥💥 VIB34D ULTRA BOMBASTIC DEMO LOADED! 💥🔥');
+        console.log('🎮 Use keys 1-7 or click buttons to test effects!');
+
+        // Auto-hide title after 3 seconds
+        setTimeout(() => {
+            document.getElementById('title').style.opacity = '0';
+            document.getElementById('title').style.transition = 'opacity 1s ease';
+        }, 3000);
+    </script>
+</body>
+</html>

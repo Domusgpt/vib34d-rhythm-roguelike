@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VIB34D Test</title>
+    <style>
+        body { background: #111; color: #0ff; font-family: monospace; padding: 20px; }
+        .status { padding: 10px; margin: 5px; border: 1px solid #0ff; }
+        .success { border-color: #0f0; color: #0f0; }
+        .error { border-color: #f00; color: #f00; }
+        .test-btn { background: #0ff; color: #000; padding: 10px; margin: 5px; border: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>🔥💥 VIB34D RHYTHM ROGUELIKE SYSTEM TEST 💥🔥</h1>
+    <div id="status"></div>
+
+    <h2>🎮 Test Controls</h2>
+    <button class="test-btn" onclick="testModule('main.js')">Test Main Game</button>
+    <button class="test-btn" onclick="testModule('visualizers/HypercubeGameSystem.js')">Test HypercubeGameSystem</button>
+    <button class="test-btn" onclick="testModule('ui/GameUI.js')">Test GameUI</button>
+    <button class="test-btn" onclick="testModule('core/VisualizerEngine.js')">Test VisualizerEngine</button>
+
+    <script type="module">
+        const status = document.getElementById('status');
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `status ${type}`;
+            div.innerHTML = message;
+            status.appendChild(div);
+            console.log(message);
+        }
+
+        // Test basic module loading
+        window.testModule = async function(modulePath) {
+            try {
+                log(`🧪 Testing: ${modulePath}...`);
+                const module = await import(`./src/${modulePath}`);
+                log(`✅ SUCCESS: ${modulePath} loaded successfully!`, 'success');
+
+                // Log available exports
+                const exports = Object.keys(module);
+                log(`📦 Exports: ${exports.join(', ')}`);
+            } catch (error) {
+                log(`❌ ERROR: ${modulePath} failed - ${error.message}`, 'error');
+            }
+        };
+
+        // Auto-test on load
+        (async function() {
+            log('🚀 Starting VIB34D System Tests...');
+
+            // Test critical modules
+            const modules = [
+                'main.js',
+                'visualizers/HypercubeGameSystem.js',
+                'ui/GameUI.js',
+                'core/VisualizerEngine.js'
+            ];
+
+            for (const module of modules) {
+                await testModule(module);
+                await new Promise(r => setTimeout(r, 100)); // Small delay
+            }
+
+            log('🎯 Testing Complete! Check results above.', 'success');
+            log('🎮 Use the buttons above to re-test individual modules.');
+        })();
+    </script>
+</body>
+</html>
