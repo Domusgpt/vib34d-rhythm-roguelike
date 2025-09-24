@@ -13,6 +13,7 @@
 
         <!-- HUD Overlay -->
         <div id="hud">
+            <div id="feedback-layer" class="feedback-layer"></div>
             <div class="hud-top">
                 <div class="hud-score">
                     <span class="label">SCORE</span>
@@ -55,6 +56,33 @@
                 <div class="band mid" id="mid-band"></div>
                 <div class="band high" id="high-band"></div>
             </div>
+        </div>
+
+        <!-- Mobile Experience Layer -->
+        <div id="mobile-ux" class="mobile-ux">
+            <div class="status-row">
+                <div class="status-chip" id="mobile-performance-status">-- FPS</div>
+                <div class="status-chip">Latency: <span id="latency-value">interactive</span></div>
+            </div>
+            <div class="control-row">
+                <span class="row-label">Graphics</span>
+                <div class="chip-group">
+                    <button class="chip active" data-graphics-profile="auto">AUTO</button>
+                    <button class="chip" data-graphics-profile="battery">BATTERY</button>
+                    <button class="chip" data-graphics-profile="ultra">ULTRA</button>
+                </div>
+            </div>
+            <div class="control-row">
+                <span class="row-label">Touch Enhancements</span>
+                <div class="chip-group">
+                    <button class="chip" id="toggle-haptics">HAPTICS</button>
+                    <button class="chip active" id="toggle-tilt">TILT ✓</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="orientation-warning" class="orientation-warning hidden">
+            <span>Rotate for Hyperwide Mode</span>
         </div>
 
         <!-- Start Screen -->

@@ -173,13 +173,17 @@ export class InputMapping {
             }
         }
 
-        if (Math.abs(this.tilt.beta) > 1 || Math.abs(this.tilt.gamma) > 1) {
+        const tiltEnabled = typeof window === 'undefined' ? true : window.tiltInputEnabled !== false;
+        if (tiltEnabled && (Math.abs(this.tilt.beta) > 1 || Math.abs(this.tilt.gamma) > 1)) {
             const tiltX = this.tilt.gamma / 90;
             const tiltY = this.tilt.beta / 90;
             this.onParameterDelta?.({
                 rot4dZW: tiltX * 0.3,
                 chaos: Math.abs(tiltY) * 0.05
             });
+        } else if (!tiltEnabled) {
+            this.tilt.beta = 0;
+            this.tilt.gamma = 0;
         }
     }
 

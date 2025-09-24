@@ -133,6 +133,7 @@ export class GameUI {
     showBeatIndicator() {
         // Visual feedback for beat detection
         document.body.classList.add('beat-flash');
+        document.body.classList.add('beat-flash-intense');
 
         if (this.beatIndicatorTimeout) {
             clearTimeout(this.beatIndicatorTimeout);
@@ -140,6 +141,7 @@ export class GameUI {
 
         this.beatIndicatorTimeout = setTimeout(() => {
             document.body.classList.remove('beat-flash');
+            document.body.classList.remove('beat-flash-intense');
         }, 150);
     }
 
