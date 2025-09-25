@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIB34D Rhythm Roguelike - System Diagnostics</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #000;
+            color: #0ff;
+            font-family: 'Courier New', monospace;
+            overflow-x: hidden;
+        }
+
+        .diagnostics {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #f0f;
+            text-shadow: 0 0 20px #f0f;
+            text-align: center;
+        }
+
+        .system-test {
+            border: 2px solid #0ff;
+            padding: 15px;
+            margin: 20px 0;
+            background: rgba(0, 255, 255, 0.05);
+        }
+
+        .status {
+            display: inline-block;
+            padding: 5px 10px;
+            margin: 5px;
+            border-radius: 3px;
+        }
+
+        .status.working {
+            background: #0f0;
+            color: #000;
+        }
+
+        .status.broken {
+            background: #f00;
+            color: #fff;
+        }
+
+        .status.partial {
+            background: #ff0;
+            color: #000;
+        }
+
+        .status.testing {
+            background: #00f;
+            color: #fff;
+        }
+
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+
+        button {
+            background: #0ff;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #fff;
+        }
+
+        .game-container {
+            position: relative;
+            width: 100%;
+            height: 400px;
+            border: 2px solid #f0f;
+            margin: 20px 0;
+            background: #111;
+        }
+
+        #testCanvas {
+            width: 100%;
+            height: 100%;
+            background: #000;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .metric {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border: 1px solid #333;
+        }
+
+        .metric-value {
+            font-size: 24px;
+            color: #0ff;
+            font-weight: bold;
+        }
+
+        .log {
+            height: 200px;
+            overflow-y: auto;
+            background: #111;
+            padding: 10px;
+            font-size: 11px;
+            border: 1px solid #333;
+        }
+
+        .log-entry {
+            margin: 2px 0;
+        }
+
+        .log-entry.error { color: #f00; }
+        .log-entry.warning { color: #ff0; }
+        .log-entry.success { color: #0f0; }
+        .log-entry.info { color: #0ff; }
+    </style>
+</head>
+<body>
+    <div class="diagnostics">
+        <h1>🔬 VIB34D Rhythm Roguelike - DEEP SYSTEM DIAGNOSTICS 🔬</h1>
+
+        <div class="metrics">
+            <div class="metric">
+                <div>FPS</div>
+                <div class="metric-value" id="fps">0</div>
+            </div>
+            <div class="metric">
+                <div>Audio Status</div>
+                <div class="metric-value" id="audioStatus">OFF</div>
+            </div>
+            <div class="metric">
+                <div>Targets Active</div>
+                <div class="metric-value" id="targetsActive">0</div>
+            </div>
+            <div class="metric">
+                <div>Input Events</div>
+                <div class="metric-value" id="inputEvents">0</div>
+            </div>
+            <div class="metric">
+                <div>Score</div>
+                <div class="metric-value" id="score">0</div>
+            </div>
+            <div class="metric">
+                <div>WebGL Context</div>
+                <div class="metric-value" id="webglStatus">?</div>
+            </div>
+        </div>
+
+        <div class="system-test">
+            <h2>🎮 Core Game Systems</h2>
+            <button onclick="testAllSystems()">Run All Tests</button>
+            <button onclick="testAudioSystem()">Test Audio</button>
+            <button onclick="testSpawnSystem()">Test Spawning</button>
+            <button onclick="testInputSystem()">Test Input</button>
+            <button onclick="testVisualizerSystem()">Test Visualizer</button>
+            <button onclick="startFullGame()">Start Full Game</button>
+            <div id="coreResults" class="test-result"></div>
+        </div>
+
+        <div class="system-test">
+            <h2>🎵 Audio System Diagnostics</h2>
+            <div id="audioTest">
+                <button onclick="initAudio()">Initialize Audio</button>
+                <button onclick="playTestBeat()">Play Test Beat</button>
+                <button onclick="testBeatDetection()">Test Beat Detection</button>
+                <div id="audioResults" class="test-result"></div>
+            </div>
+        </div>
+
+        <div class="system-test">
+            <h2>🎯 Spawn System Diagnostics</h2>
+            <div id="spawnTest">
+                <button onclick="spawnTestTargets()">Spawn Test Targets</button>
+                <button onclick="testSpawnPatterns()">Test Spawn Patterns</button>
+                <div id="spawnResults" class="test-result"></div>
+            </div>
+        </div>
+
+        <div class="system-test">
+            <h2>👆 Input System Diagnostics</h2>
+            <div id="inputTest">
+                <button onclick="testTouch()">Test Touch</button>
+                <button onclick="testKeyboard()">Test Keyboard</button>
+                <div id="inputResults" class="test-result"></div>
+            </div>
+        </div>
+
+        <div class="system-test">
+            <h2>🌟 Visual System Diagnostics</h2>
+            <div id="visualTest">
+                <button onclick="testWebGL()">Test WebGL</button>
+                <button onclick="testShaders()">Test Shaders</button>
+                <button onclick="testEffects()">Test Effects</button>
+                <div id="visualResults" class="test-result"></div>
+            </div>
+        </div>
+
+        <div class="game-container">
+            <canvas id="testCanvas"></canvas>
+        </div>
+
+        <div class="system-test">
+            <h2>📊 Live System Log</h2>
+            <div id="systemLog" class="log"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Global test state
+        window.testState = {
+            game: null,
+            audioService: null,
+            spawnSystem: null,
+            inputSystem: null,
+            visualizerEngine: null,
+            errors: [],
+            warnings: [],
+            successes: [],
+            frameCount: 0,
+            lastFrameTime: performance.now(),
+            fps: 0,
+            inputEventCount: 0,
+            activeTargets: 0
+        };
+
+        // Logging system
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('systemLog');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.insertBefore(entry, logDiv.firstChild);
+
+            // Keep log size reasonable
+            while (logDiv.children.length > 100) {
+                logDiv.removeChild(logDiv.lastChild);
+            }
+
+            // Also log to console
+            console.log(`[${type}] ${message}`);
+
+            // Track in test state
+            if (type === 'error') window.testState.errors.push(message);
+            if (type === 'warning') window.testState.warnings.push(message);
+            if (type === 'success') window.testState.successes.push(message);
+        }
+
+        // FPS Counter
+        function updateFPS() {
+            const now = performance.now();
+            const delta = now - window.testState.lastFrameTime;
+            if (delta > 0) {
+                window.testState.fps = Math.round(1000 / delta);
+                document.getElementById('fps').textContent = window.testState.fps;
+            }
+            window.testState.lastFrameTime = now;
+            window.testState.frameCount++;
+            requestAnimationFrame(updateFPS);
+        }
+        updateFPS();
+
+        // Test all systems
+        window.testAllSystems = async function() {
+            log('🚀 Starting comprehensive system test...', 'info');
+
+            // Clear previous results
+            window.testState.errors = [];
+            window.testState.warnings = [];
+            window.testState.successes = [];
+
+            // Test each system
+            await testAudioSystem();
+            await testSpawnSystem();
+            await testInputSystem();
+            await testVisualizerSystem();
+
+            // Generate report
+            const report = `
+SYSTEM TEST COMPLETE:
+✅ Successes: ${window.testState.successes.length}
+⚠️ Warnings: ${window.testState.warnings.length}
+❌ Errors: ${window.testState.errors.length}
+
+${window.testState.errors.map(e => '❌ ' + e).join('\n')}
+${window.testState.warnings.map(w => '⚠️ ' + w).join('\n')}
+${window.testState.successes.map(s => '✅ ' + s).join('\n')}
+            `;
+
+            document.getElementById('coreResults').textContent = report;
+            log('Test complete. See report above.', 'info');
+        };
+
+        // Audio System Tests
+        window.testAudioSystem = async function() {
+            log('Testing Audio System...', 'info');
+
+            try {
+                const { AudioService } = await import('./src/game/audio/AudioService.js');
+                window.testState.audioService = new AudioService();
+                log('AudioService loaded successfully', 'success');
+
+                // Test audio context
+                if (window.testState.audioService.context) {
+                    log('Audio context created', 'success');
+                    document.getElementById('audioStatus').textContent = 'READY';
+                } else {
+                    log('Audio context not available', 'error');
+                    document.getElementById('audioStatus').textContent = 'FAILED';
+                }
+
+                // Test beat detection
+                let beatCount = 0;
+                window.testState.audioService.onBeat(() => {
+                    beatCount++;
+                    log(`Beat detected: ${beatCount}`, 'success');
+                });
+
+                document.getElementById('audioResults').textContent = `
+Audio Service: ${window.testState.audioService ? 'Loaded' : 'Failed'}
+Context State: ${window.testState.audioService?.context?.state || 'N/A'}
+Sample Rate: ${window.testState.audioService?.context?.sampleRate || 'N/A'}
+Beat Callbacks: ${window.testState.audioService?.beatListeners?.size || 0}
+                `;
+
+            } catch (error) {
+                log(`Audio system error: ${error.message}`, 'error');
+                document.getElementById('audioStatus').textContent = 'ERROR';
+            }
+        };
+
+        // Spawn System Tests
+        window.testSpawnSystem = async function() {
+            log('Testing Spawn System...', 'info');
+
+            try {
+                const { SpawnSystem } = await import('./src/game/spawn/SpawnSystem.js');
+                const { GeometryController } = await import('./src/game/geometry/GeometryController.js');
+
+                const geometryController = new GeometryController();
+                window.testState.spawnSystem = new SpawnSystem({
+                    geometryController,
+                    audioService: window.testState.audioService
+                });
+
+                log('SpawnSystem loaded successfully', 'success');
+
+                // Test spawn generation
+                window.testState.spawnSystem.on('spawn', (target) => {
+                    window.testState.activeTargets++;
+                    document.getElementById('targetsActive').textContent = window.testState.activeTargets;
+                    log(`Target spawned: ${target.id} at (${target.x?.toFixed(2)}, ${target.y?.toFixed(2)})`, 'success');
+                });
+
+                // Manually trigger a beat to test spawning
+                window.testState.spawnSystem.handleBeat();
+
+                document.getElementById('spawnResults').textContent = `
+Spawn System: Loaded
+Active Targets: ${window.testState.spawnSystem.activeTargets.length}
+Beat Count: ${window.testState.spawnSystem.beatCount}
+Difficulty: ${window.testState.spawnSystem.difficulty}
+                `;
+
+            } catch (error) {
+                log(`Spawn system error: ${error.message}`, 'error');
+            }
+        };
+
+        // Input System Tests
+        window.testInputSystem = async function() {
+            log('Testing Input System...', 'info');
+
+            try {
+                const { InputMapping } = await import('./src/game/input/InputMapping.js');
+
+                const canvas = document.getElementById('testCanvas');
+                window.testState.inputSystem = new InputMapping({
+                    element: canvas,
+                    onParameterDelta: (delta) => {
+                        log(`Parameter delta: ${JSON.stringify(delta)}`, 'info');
+                    },
+                    onPulse: (pulse) => {
+                        window.testState.inputEventCount++;
+                        document.getElementById('inputEvents').textContent = window.testState.inputEventCount;
+                        log(`Pulse at (${pulse.x?.toFixed(2)}, ${pulse.y?.toFixed(2)})`, 'success');
+                    },
+                    onLongPress: () => {
+                        log('Long press detected!', 'success');
+                    }
+                });
+
+                log('InputMapping loaded successfully', 'success');
+
+                // Add visual feedback for input
+                canvas.addEventListener('pointerdown', (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = (e.clientX - rect.left) / rect.width;
+                    const y = (e.clientY - rect.top) / rect.height;
+                    log(`Touch at normalized: (${x.toFixed(2)}, ${y.toFixed(2)})`, 'info');
+                });
+
+                document.getElementById('inputResults').textContent = `
+Input System: Loaded
+Element: ${canvas ? 'Canvas Connected' : 'Not Connected'}
+Pointer States: ${window.testState.inputSystem?.pointerStates?.size || 0}
+Input Events: ${window.testState.inputEventCount}
+                `;
+
+            } catch (error) {
+                log(`Input system error: ${error.message}`, 'error');
+            }
+        };
+
+        // Visualizer System Tests
+        window.testVisualizerSystem = async function() {
+            log('Testing Visualizer System...', 'info');
+
+            try {
+                // Test WebGL first
+                const canvas = document.getElementById('testCanvas');
+                const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+
+                if (gl) {
+                    log('WebGL context created successfully', 'success');
+                    document.getElementById('webglStatus').textContent = 'OK';
+
+                    // Test basic rendering
+                    gl.clearColor(0.1, 0.0, 0.1, 1.0);
+                    gl.clear(gl.COLOR_BUFFER_BIT);
+                    log('WebGL clear successful', 'success');
+                } else {
+                    log('WebGL context creation failed', 'error');
+                    document.getElementById('webglStatus').textContent = 'FAIL';
+                }
+
+                // Test visualizer engine
+                const { VisualizerEngine } = await import('./src/core/VisualizerEngine.js');
+                window.testState.visualizerEngine = new VisualizerEngine(canvas);
+
+                log('VisualizerEngine loaded successfully', 'success');
+
+                // Test initialization
+                await window.testState.visualizerEngine.initialize();
+                log('VisualizerEngine initialized', 'success');
+
+                document.getElementById('visualResults').textContent = `
+WebGL: ${gl ? 'Available' : 'Not Available'}
+WebGL Version: ${gl ? (gl.getParameter(gl.VERSION) || 'Unknown') : 'N/A'}
+Renderer: ${gl ? (gl.getParameter(gl.RENDERER) || 'Unknown') : 'N/A'}
+Visualizer: ${window.testState.visualizerEngine ? 'Loaded' : 'Failed'}
+Current System: ${window.testState.visualizerEngine?.currentSystem || 'None'}
+                `;
+
+            } catch (error) {
+                log(`Visualizer system error: ${error.message}`, 'error');
+                document.getElementById('webglStatus').textContent = 'ERROR';
+            }
+        };
+
+        // Initialize Audio
+        window.initAudio = async function() {
+            log('Initializing audio context...', 'info');
+            if (window.testState.audioService) {
+                await window.testState.audioService.initialize();
+                log('Audio initialized', 'success');
+            } else {
+                log('Audio service not loaded', 'error');
+            }
+        };
+
+        // Play test beat
+        window.playTestBeat = function() {
+            log('Playing test beat...', 'info');
+            if (window.testState.audioService) {
+                // Create a simple oscillator for testing
+                const context = window.testState.audioService.context;
+                const oscillator = context.createOscillator();
+                const gainNode = context.createGain();
+
+                oscillator.connect(gainNode);
+                gainNode.connect(context.destination);
+
+                oscillator.frequency.value = 440; // A4 note
+                gainNode.gain.value = 0.3;
+
+                oscillator.start();
+                oscillator.stop(context.currentTime + 0.2);
+
+                log('Test beat played', 'success');
+            }
+        };
+
+        // Test beat detection
+        window.testBeatDetection = function() {
+            log('Testing beat detection...', 'info');
+            if (window.testState.spawnSystem) {
+                // Simulate beats
+                let beatCount = 0;
+                const interval = setInterval(() => {
+                    window.testState.spawnSystem.handleBeat();
+                    beatCount++;
+                    log(`Simulated beat ${beatCount}`, 'info');
+
+                    if (beatCount >= 4) {
+                        clearInterval(interval);
+                        log('Beat simulation complete', 'success');
+                    }
+                }, 500); // 120 BPM
+            }
+        };
+
+        // Spawn test targets
+        window.spawnTestTargets = function() {
+            log('Spawning test targets...', 'info');
+
+            if (window.testState.spawnSystem) {
+                // Create some test targets
+                for (let i = 0; i < 5; i++) {
+                    const target = {
+                        id: Date.now() + i,
+                        x: Math.random(),
+                        y: Math.random(),
+                        z: Math.random(),
+                        w: Math.random(),
+                        type: 'test',
+                        age: 0,
+                        captured: false
+                    };
+
+                    window.testState.spawnSystem.activeTargets.push(target);
+                    window.testState.activeTargets++;
+                    document.getElementById('targetsActive').textContent = window.testState.activeTargets;
+
+                    log(`Test target ${i} spawned`, 'success');
+                }
+            } else {
+                log('Spawn system not loaded', 'error');
+            }
+        };
+
+        // Test spawn patterns
+        window.testSpawnPatterns = function() {
+            log('Testing spawn patterns...', 'info');
+
+            const patterns = ['torusLane', 'orbitalShells', 'hypercubeVertices', 'fractalSpiral'];
+            patterns.forEach(pattern => {
+                log(`Testing pattern: ${pattern}`, 'info');
+                // Would test actual pattern generation here
+            });
+        };
+
+        // Test touch
+        window.testTouch = function() {
+            log('Touch test mode activated. Touch the canvas.', 'info');
+            document.getElementById('testCanvas').style.background = 'rgba(0,255,255,0.1)';
+        };
+
+        // Test keyboard
+        window.testKeyboard = function() {
+            log('Keyboard test mode activated. Press keys.', 'info');
+
+            const keyHandler = (e) => {
+                log(`Key pressed: ${e.key} (code: ${e.code})`, 'info');
+                window.testState.inputEventCount++;
+                document.getElementById('inputEvents').textContent = window.testState.inputEventCount;
+            };
+
+            document.addEventListener('keydown', keyHandler);
+
+            setTimeout(() => {
+                document.removeEventListener('keydown', keyHandler);
+                log('Keyboard test complete', 'success');
+            }, 10000);
+        };
+
+        // Test WebGL
+        window.testWebGL = function() {
+            const canvas = document.getElementById('testCanvas');
+            const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+
+            if (gl) {
+                // Animate color change to verify rendering
+                let hue = 0;
+                const animate = () => {
+                    hue = (hue + 1) % 360;
+                    const rgb = hsvToRgb(hue / 360, 1, 0.5);
+                    gl.clearColor(rgb[0], rgb[1], rgb[2], 1.0);
+                    gl.clear(gl.COLOR_BUFFER_BIT);
+
+                    if (hue < 360) {
+                        requestAnimationFrame(animate);
+                    } else {
+                        log('WebGL animation test complete', 'success');
+                    }
+                };
+                animate();
+            }
+        };
+
+        // Test shaders
+        window.testShaders = async function() {
+            log('Testing shader compilation...', 'info');
+
+            const canvas = document.getElementById('testCanvas');
+            const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+
+            if (gl) {
+                // Test vertex shader
+                const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+                gl.shaderSource(vertexShader, `
+                    attribute vec2 position;
+                    void main() {
+                        gl_Position = vec4(position, 0.0, 1.0);
+                    }
+                `);
+                gl.compileShader(vertexShader);
+
+                if (gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+                    log('Vertex shader compiled successfully', 'success');
+                } else {
+                    log('Vertex shader compilation failed: ' + gl.getShaderInfoLog(vertexShader), 'error');
+                }
+
+                // Test fragment shader
+                const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+                gl.shaderSource(fragmentShader, `
+                    precision mediump float;
+                    void main() {
+                        gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
+                    }
+                `);
+                gl.compileShader(fragmentShader);
+
+                if (gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+                    log('Fragment shader compiled successfully', 'success');
+                } else {
+                    log('Fragment shader compilation failed: ' + gl.getShaderInfoLog(fragmentShader), 'error');
+                }
+            }
+        };
+
+        // Test effects
+        window.testEffects = async function() {
+            log('Testing visual effects...', 'info');
+
+            try {
+                const { EffectsManager } = await import('./src/game/effects/EffectsManager.js');
+                const effectsManager = new EffectsManager({ modeController: null });
+
+                // Test effect triggers
+                effectsManager.triggerCapture({ x: 0.5, y: 0.5 });
+                log('Capture effect triggered', 'success');
+
+                effectsManager.triggerMiss({ x: 0.3, y: 0.7 });
+                log('Miss effect triggered', 'success');
+
+                effectsManager.triggerCombo(5);
+                log('Combo effect triggered', 'success');
+
+            } catch (error) {
+                log(`Effects error: ${error.message}`, 'error');
+            }
+        };
+
+        // Start full game
+        window.startFullGame = async function() {
+            log('Starting full game...', 'info');
+
+            try {
+                const { default: VIB34DRhythmGame } = await import('./src/main.js');
+
+                // Create game instance
+                window.testState.game = new VIB34DRhythmGame();
+                await window.testState.game.initializeGame();
+
+                log('Game initialized successfully!', 'success');
+
+                // Update score display
+                setInterval(() => {
+                    if (window.testState.game?.game?.score !== undefined) {
+                        document.getElementById('score').textContent = window.testState.game.game.score;
+                    }
+                }, 100);
+
+            } catch (error) {
+                log(`Game initialization error: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
+        };
+
+        // Helper function
+        function hsvToRgb(h, s, v) {
+            let r, g, b;
+            const i = Math.floor(h * 6);
+            const f = h * 6 - i;
+            const p = v * (1 - s);
+            const q = v * (1 - f * s);
+            const t = v * (1 - (1 - f) * s);
+
+            switch (i % 6) {
+                case 0: r = v, g = t, b = p; break;
+                case 1: r = q, g = v, b = p; break;
+                case 2: r = p, g = v, b = t; break;
+                case 3: r = p, g = q, b = v; break;
+                case 4: r = t, g = p, b = v; break;
+                case 5: r = v, g = p, b = q; break;
+            }
+
+            return [r, g, b];
+        }
+
+        // Auto-run basic tests on load
+        setTimeout(() => {
+            log('🚀 VIB34D Rhythm Roguelike System Diagnostics Ready', 'info');
+            log('Click "Run All Tests" to begin comprehensive testing', 'info');
+        }, 1000);
+    </script>
+</body>
+</html>

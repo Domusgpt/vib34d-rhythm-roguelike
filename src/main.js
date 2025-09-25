@@ -125,6 +125,9 @@ class VIB34DRhythmGame {
         // 🔥💥 SETUP DEMO MODE FOR TESTING BOMBASTIC EFFECTS 💥🔥
         this.setupDemoMode();
 
+        // 🚀 START AUTO-DEMO MODE FOR IMMEDIATE VISUAL FEEDBACK 🚀
+        this.startAutoDemo();
+
         // Pause menu controls
         document.getElementById('resume').addEventListener('click', () => this.resumeGame());
         document.getElementById('restart').addEventListener('click', () => this.restartLevel());
@@ -218,6 +221,44 @@ class VIB34DRhythmGame {
 
         // Update game UI
         this.gameUI.update(deltaTime);
+    }
+
+    updateVisualizerFromAudio() {
+        // Get audio reactive data
+        if (this.audioService && this.audioService.frequencyData) {
+            const audioData = {
+                frequencyData: this.audioService.frequencyData,
+                timeDomainData: this.audioService.timeDomainData
+            };
+
+            // Pass audio data to visualizer for reactive effects
+            if (this.visualizer && this.visualizer.onAudioData) {
+                this.visualizer.onAudioData(audioData);
+            }
+
+            // Update global audio reactive values
+            const bassLevel = this.getFrequencyRange(this.audioService.frequencyData, 0, 0.1);
+            const midLevel = this.getFrequencyRange(this.audioService.frequencyData, 0.1, 0.5);
+            const highLevel = this.getFrequencyRange(this.audioService.frequencyData, 0.5, 1.0);
+
+            window.audioReactive = {
+                bass: bassLevel,
+                mid: midLevel,
+                high: highLevel,
+                energy: (bassLevel + midLevel + highLevel) / 3
+            };
+
+            // Update visualizer parameters based on audio
+            if (this.visualizer && this.visualizer.setParameters) {
+                const audioParams = this.parameterManager.getAllParameters();
+                // Add audio-reactive modulation
+                audioParams.chaos = Math.min(1.0, audioParams.chaos + bassLevel * 0.3);
+                audioParams.gridDensity = Math.max(5, audioParams.gridDensity + midLevel * 10);
+                audioParams.hue = (audioParams.hue + highLevel * 60) % 360;
+
+                this.visualizer.setParameters(audioParams);
+            }
+        }
     }
 
     render() {
@@ -591,6 +632,76 @@ class VIB34DRhythmGame {
 
         console.log('🎮🔥 DEMO MODE ACTIVATED! Use keys 1-7 to test BOMBASTIC effects! 🔥🎮');
         console.log('1: Beat Event | 2: Combo | 3: Damage | 4: Power-Up | 5: Level Up | 6: Perfect Hit | 7: Boss Mode');
+    }
+
+    startAutoDemo() {
+        // Immediately start visual demonstration even without audio
+        console.log('🚀💥 AUTO-DEMO: Starting immediate visual showcase!');
+
+        // Start the game loop in demo mode
+        this.gameState = 'playing';
+        this.startGameLoop();
+
+        // Auto-trigger events for demonstration
+        let demoStep = 0;
+        const demoInterval = setInterval(() => {
+            if (this.gameState !== 'playing') return;
+
+            switch (demoStep % 7) {
+                case 0:
+                    this.triggerBeatEvent(0.8);
+                    this.spawnBeatChallenge(0.8);
+                    break;
+                case 1:
+                    this.triggerComboEvent(0.7);
+                    break;
+                case 2:
+                    this.collectPowerUp('ENERGY_SURGE', 0.9);
+                    break;
+                case 3:
+                    this.triggerBeatEvent(1.0);
+                    break;
+                case 4:
+                    this.triggerEnemySpawnEvent(0.6);
+                    break;
+                case 5:
+                    this.triggerComboEvent(0.9);
+                    break;
+                case 6:
+                    this.levelUp();
+                    demoStep = -1; // Reset after level up
+                    break;
+            }
+
+            // Simulate audio reactive data for visualization
+            window.audioReactive = {
+                bass: Math.random() * 0.8 + 0.2,
+                mid: Math.random() * 0.7 + 0.3,
+                high: Math.random() * 0.9 + 0.1,
+                energy: Math.random() * 0.8 + 0.2
+            };
+
+            // Update visualizer with simulated audio
+            this.updateVisualizerFromAudio();
+
+            demoStep++;
+        }, 800 + Math.random() * 400); // Variable timing for natural feel
+
+        // Synthetic beat generation
+        setInterval(() => {
+            if (this.gameState === 'playing') {
+                this.handleBeat({
+                    energy: Math.random() * 0.8 + 0.2,
+                    time: performance.now(),
+                    source: 'synthetic'
+                });
+            }
+        }, 500); // 120 BPM
+
+        // Store interval for cleanup
+        this.demoInterval = demoInterval;
+
+        console.log('🎵💥 AUTO-DEMO: Synthetic beats and effects running!');
     }
 }
 

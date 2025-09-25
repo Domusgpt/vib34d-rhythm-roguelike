@@ -36,6 +36,11 @@ export class AudioService {
         this.gainNode.connect(this.context.destination);
     }
 
+    // Alias for compatibility with main game
+    async initialize() {
+        return await this.init();
+    }
+
     async loadTrack(url) {
         await this.init();
         this.stop();
