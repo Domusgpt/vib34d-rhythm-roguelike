@@ -1,864 +1,612 @@
 /**
- * VIB34D Visualizer Engine
- * Integrates all 4D visualization systems for the rhythm game
+ * VisualizerEngine
+ * Coordinates all visualization subsystems through the production
+ * architecture described in PROPER_ARCHITECTURE_SOLUTIONS.md.
+ *
+ * Responsibilities:
+ *  - bootstrap and share the CanvasResourcePool/EngineCoordinator
+ *  - synchronise visualization state with the centralized StateManager
+ *  - route audio/gameplay events to the active renderer
+ *  - expose legacy "bombastic" hooks used by the existing gameplay code
  */
 
 import { VIB34DIntegratedEngine as FacetedEngine } from './Engine.js';
-import { QuantumHolographicVisualizer as QuantumEngine } from '../quantum/QuantumVisualizer.js';
-import { HolographicVisualizer as HolographicEngine } from '../holograms/HolographicVisualizer.js';
+import { QuantumEngine } from '../quantum/QuantumEngine.js';
+import { RealHolographicSystem } from '../holograms/RealHolographicSystem.js';
 import { PolychoraSystem } from './PolychoraSystem.js';
 import { HypercubeGameSystem } from '../visualizers/HypercubeGameSystem.js';
-import { CanvasManager } from './CanvasManager.js';
+import { CanvasResourcePool } from './CanvasManager.js';
+import { EngineCoordinator } from './EngineCoordinator.js';
 import { ReactivityManager } from './ReactivityManager.js';
+import { ResourceManager } from './ResourceManager.js';
+import { StateManager } from './StateManager.js';
+
+const SUPPORTED_SYSTEMS = ['faceted', 'quantum', 'holographic', 'polychora'];
+const DEFAULT_SYSTEM = 'faceted';
+
+const now = () => {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+  return Date.now();
+};
 
 export class VisualizerEngine {
-    constructor(canvas) {
-        this.canvas = canvas;
-        this.gl = null;
+  constructor(canvas, options = {}) {
+    this.canvas = canvas;
+    this.gl = null;
 
-        // Available visualization systems
-        this.systems = {
-            faceted: null,
-            quantum: null,
-            holographic: null,
-            polychora: null,
-            hypercube: null  // BOMBASTIC HYPERCUBE SYSTEM!
-        };
+    this.logger = options.logger || console;
 
-        this.currentSystem = 'faceted';
-        this.currentParameters = {};
+    this.resourceManager = options.resourceManager || new ResourceManager(options.resourceOptions);
+    this.stateManager = options.stateManager || new StateManager();
 
-        this.canvasManager = new CanvasManager();
-        this.reactivityManager = null;
+    this.canvasManager = options.canvasManager || new CanvasResourcePool({
+      resourceManager: this.resourceManager,
+      ...options.canvasPoolOptions,
+    });
 
-        // System switching state
-        this.isInitialized = false;
-        this.systemReady = false;
+    this.engineCoordinator = options.engineCoordinator || new EngineCoordinator(this.canvasManager, {
+      resourceManager: this.resourceManager,
+      stateManager: this.stateManager,
+      logger: this.logger,
+      engineConfigs: options.engineConfigs || undefined,
+    });
+
+    this.reactivityManager = options.reactivityManager || new ReactivityManager();
+    this.hypercubeFactory = options.hypercubeFactory
+      || ((targetCanvas) => new HypercubeGameSystem(targetCanvas));
+
+    this.systems = {
+      faceted: null,
+      quantum: null,
+      holographic: null,
+      polychora: null,
+      hypercube: null,
+    };
+
+    this.activeSystem = DEFAULT_SYSTEM;
+    this.systemReady = false;
+    this.isInitialized = false;
+
+    this.stateReady = false;
+    this.stateSyncInProgress = false;
+    this.stateUnsubscribe = null;
+
+    const visualizationState = this.stateManager?.getVisualizationState?.();
+    this.currentParameters = visualizationState?.parameters
+      ? { ...visualizationState.parameters }
+      : {};
+
+    this.performanceSample = {
+      lastSampleTime: 0,
+      frameCount: 0,
+      totalRenderTime: 0,
+    };
+  }
+
+  async initialize() {
+    if (this.isInitialized) {
+      return;
     }
 
-    async initialize() {
+    this.gl = this.canvas.getContext('webgl2') || this.canvas.getContext('webgl');
+    if (!this.gl) {
+      throw new Error('VisualizerEngine: WebGL not supported');
+    }
+
+    this.setupStateManagement();
+
+    this.canvasManager.initialize();
+
+    await this.engineCoordinator.initializeEngines({
+      faceted: FacetedEngine,
+      quantum: QuantumEngine,
+      holographic: RealHolographicSystem,
+      polychora: PolychoraSystem,
+    });
+
+    SUPPORTED_SYSTEMS.forEach((systemName) => {
+      const engineInstance = this.engineCoordinator.getEngine(systemName);
+      if (engineInstance) {
+        this.systems[systemName] = engineInstance;
+      }
+    });
+
+    const initialSystem = this.stateManager?.getVisualizationState?.().activeSystem
+      || DEFAULT_SYSTEM;
+
+    await this.switchToSystem(initialSystem, { stateDriven: true });
+
+    if (this.currentParameters && Object.keys(this.currentParameters).length > 0) {
+      this.engineCoordinator.applyParameters(this.currentParameters);
+    }
+
+    this.stateReady = true;
+    this.stateSyncInProgress = true;
+    this.stateManager.dispatch({ type: 'system/initialize' });
+    this.stateSyncInProgress = false;
+
+    this.isInitialized = true;
+    this.logger.log('VisualizerEngine: initialized');
+  }
+
+  setupStateManagement() {
+    if (!this.stateManager || this.stateUnsubscribe) {
+      return;
+    }
+
+    this.stateUnsubscribe = this.stateManager.subscribe((newState, prevState) => {
+      if (!this.stateReady) {
+        return;
+      }
+
+      if (!this.stateSyncInProgress
+        && newState.visualization.activeSystem !== prevState.visualization.activeSystem) {
+        this.switchToSystem(newState.visualization.activeSystem, { stateDriven: true });
+      }
+
+      if (!this.stateSyncInProgress
+        && newState.visualization.parameters !== prevState.visualization.parameters) {
+        this.updateParameters(newState.visualization.parameters, { replace: true, skipState: true });
+      }
+    });
+  }
+
+  async switchToSystem(systemName, options = {}) {
+    const { stateDriven = false } = options;
+
+    if (systemName === 'hypercube') {
+      if (!this.systems.hypercube) {
+        this.systems.hypercube = this.hypercubeFactory(this.canvas);
+      }
+
+      this.activeSystem = 'hypercube';
+      this.systemReady = true;
+
+      if (this.reactivityManager?.setActiveSystem) {
+        this.reactivityManager.setActiveSystem('hypercube', this.systems.hypercube);
+      }
+
+      if (Object.keys(this.currentParameters).length > 0) {
+        this.applyParametersToSystem(this.systems.hypercube, this.currentParameters);
+      }
+
+      if (!stateDriven && this.stateManager) {
+        this.stateSyncInProgress = true;
+        this.stateManager.dispatch({
+          type: 'visualization/switchSystem',
+          payload: 'hypercube',
+        });
+        this.stateSyncInProgress = false;
+      }
+
+      return true;
+    }
+
+    if (!SUPPORTED_SYSTEMS.includes(systemName)) {
+      this.logger.warn(`VisualizerEngine: Unknown system ${systemName}`);
+      return false;
+    }
+
+    const switched = await this.engineCoordinator.switchEngine(systemName);
+    if (!switched) {
+      return false;
+    }
+
+    this.activeSystem = systemName;
+    this.systems[systemName] = this.engineCoordinator.getEngine(systemName);
+    this.systemReady = true;
+
+    if (this.reactivityManager?.setActiveSystem) {
+      this.reactivityManager.setActiveSystem(systemName, this.systems[systemName]);
+    }
+
+    if (Object.keys(this.currentParameters).length > 0) {
+      this.engineCoordinator.applyParameters(this.currentParameters, systemName);
+    }
+
+    if (!stateDriven && this.stateManager) {
+      this.stateSyncInProgress = true;
+      this.stateManager.dispatch({
+        type: 'visualization/switchSystem',
+        payload: systemName,
+      });
+      this.stateSyncInProgress = false;
+    }
+
+    return true;
+  }
+
+  setParameters(parameters) {
+    this.updateParameters(parameters, { replace: true });
+  }
+
+  updateParameters(parameters, options = {}) {
+    const { skipState = false, replace = false } = options;
+
+    this.currentParameters = replace
+      ? { ...parameters }
+      : { ...this.currentParameters, ...parameters };
+
+    if (!this.systemReady) {
+      return;
+    }
+
+    if (this.activeSystem === 'hypercube') {
+      const hypercube = this.systems.hypercube;
+      if (hypercube) {
+        this.applyParametersToSystem(hypercube, this.currentParameters);
+      }
+    } else {
+      this.engineCoordinator.applyParameters(this.currentParameters, this.activeSystem);
+    }
+
+    if (!skipState && this.stateManager) {
+      this.stateSyncInProgress = true;
+      this.stateManager.dispatch({
+        type: 'visualization/updateParameters',
+        payload: this.currentParameters,
+      });
+      this.stateSyncInProgress = false;
+    }
+  }
+
+  applyParametersToSystem(system, params) {
+    if (!system) {
+      return;
+    }
+
+    if (typeof system.setParameters === 'function') {
+      system.setParameters(params);
+      return;
+    }
+
+    if (typeof system.updateParameters === 'function') {
+      system.updateParameters(params);
+    }
+
+    if (typeof system.setVisualParameters === 'function') {
+      system.setVisualParameters({
+        gridDensity: params.gridDensity ?? 15,
+        morphFactor: params.morphFactor ?? 1,
+        chaos: params.chaos ?? 0.2,
+        speed: params.speed ?? 1,
+        hue: params.hue ?? 200,
+        intensity: params.intensity ?? 0.5,
+        saturation: params.saturation ?? 0.8,
+      });
+    }
+
+    if (params.geometry !== undefined && typeof system.setGeometry === 'function') {
+      system.setGeometry(params.geometry);
+    }
+
+    if (typeof system.set4DRotation === 'function') {
+      system.set4DRotation(
+        params.rot4dXW ?? 0,
+        params.rot4dYW ?? 0,
+        params.rot4dZW ?? 0,
+      );
+    }
+
+    if (params.dimension !== undefined && typeof system.setDimension === 'function') {
+      system.setDimension(params.dimension);
+    }
+  }
+
+  render(timestamp = 0, gameState = {}) {
+    if (!this.systemReady || !this.gl) {
+      return;
+    }
+
+    const start = now();
+
+    if (this.activeSystem === 'hypercube') {
+      const hypercube = this.systems.hypercube;
+      if (hypercube?.render) {
+        hypercube.render(timestamp, gameState);
+      }
+    } else {
+      this.engineCoordinator.render(timestamp, gameState);
+    }
+
+    if (this.systems.hypercube?.updateGameStateVisuals) {
+      this.systems.hypercube.updateGameStateVisuals(gameState);
+    }
+
+    this.trackPerformance(now() - start);
+  }
+
+  trackPerformance(renderDuration) {
+    if (!this.stateManager) {
+      return;
+    }
+
+    const currentTime = now();
+
+    if (!this.performanceSample.lastSampleTime) {
+      this.performanceSample.lastSampleTime = currentTime;
+    }
+
+    this.performanceSample.frameCount += 1;
+    this.performanceSample.totalRenderTime += renderDuration;
+
+    const elapsed = currentTime - this.performanceSample.lastSampleTime;
+    if (elapsed < 500) {
+      return;
+    }
+
+    const frameCount = Math.max(1, this.performanceSample.frameCount);
+    const averageFrameTime = elapsed / frameCount;
+    const averageRenderTime = this.performanceSample.totalRenderTime / frameCount;
+    const fps = averageFrameTime > 0 ? 1000 / averageFrameTime : 0;
+
+    this.stateSyncInProgress = true;
+    this.stateManager.dispatch({
+      type: 'visualization/updatePerformance',
+      payload: {
+        fps: Math.round(fps * 10) / 10,
+        frameTime: averageFrameTime,
+        renderTime: averageRenderTime,
+      },
+    });
+    this.stateSyncInProgress = false;
+
+    this.performanceSample.lastSampleTime = currentTime;
+    this.performanceSample.frameCount = 0;
+    this.performanceSample.totalRenderTime = 0;
+  }
+
+  onBeat(beatData) {
+    const system = this.getActiveSystemInstance();
+    if (system?.onBeat) {
+      system.onBeat(beatData);
+    }
+
+    if (this.stateManager && beatData) {
+      this.stateSyncInProgress = true;
+      this.stateManager.dispatch({
+        type: 'audio/addBeat',
+        payload: { ...beatData, timestamp: Date.now() },
+      });
+      this.stateSyncInProgress = false;
+    }
+  }
+
+  onAudioData(audioData = {}) {
+    const system = this.getActiveSystemInstance();
+    if (system?.onAudioData) {
+      system.onAudioData(audioData);
+    }
+
+    if (this.systems.hypercube?.updateAudioExplosion) {
+      this.systems.hypercube.updateAudioExplosion(audioData);
+    }
+
+    if (this.stateManager) {
+      const reactivePayload = {
+        bass: audioData.bass ?? 0,
+        mid: audioData.mid ?? 0,
+        high: audioData.high ?? 0,
+        energy: audioData.energy ?? 0,
+      };
+
+      const analysisPayload = {};
+      if (audioData.frequencyData) {
+        analysisPayload.frequencyData = audioData.frequencyData;
+      }
+      if (audioData.tempo) {
+        analysisPayload.tempo = audioData.tempo;
+      }
+
+      this.stateSyncInProgress = true;
+      this.stateManager.dispatch({ type: 'audio/updateReactive', payload: reactivePayload });
+      if (Object.keys(analysisPayload).length > 0) {
+        this.stateManager.dispatch({ type: 'audio/updateAnalysis', payload: analysisPayload });
+      }
+      this.stateSyncInProgress = false;
+    }
+  }
+
+  handleResize(width, height) {
+    this.canvasManager.handleResize(width, height);
+    this.engineCoordinator.handleResize(width, height);
+  }
+
+  destroy() {
+    Object.keys(this.systems).forEach((systemName) => {
+      const system = this.systems[systemName];
+      if (system?.cleanup) {
         try {
-            // Initialize WebGL context
-            this.gl = this.canvas.getContext('webgl2') || this.canvas.getContext('webgl');
-            if (!this.gl) {
-                throw new Error('WebGL not supported');
-            }
-
-            // Initialize canvas manager
-            this.canvasManager.initialize(this.canvas);
-
-            // Initialize reactivity manager
-            this.reactivityManager = new ReactivityManager();
-            this.reactivityManager.initialize(this.canvas);
-
-            // Initialize with faceted system by default
-            await this.switchToSystem('faceted');
-
-            this.isInitialized = true;
-            console.log('VisualizerEngine initialized successfully');
-
+          system.cleanup();
         } catch (error) {
-            console.error('Failed to initialize VisualizerEngine:', error);
-            throw error;
+          this.logger.error(`VisualizerEngine: cleanup error for ${systemName}`, error);
         }
+      }
+    });
+
+    this.engineCoordinator.destroy();
+    this.canvasManager.cleanup();
+
+    if (this.stateUnsubscribe) {
+      this.stateUnsubscribe();
+      this.stateUnsubscribe = null;
     }
 
-    async switchToSystem(systemName) {
-        if (!['faceted', 'quantum', 'holographic', 'polychora', 'hypercube'].includes(systemName)) {
-            console.warn('Unknown system:', systemName);
-            return false;
-        }
+    this.stateManager?.destroy?.();
+    this.resourceManager?.destroy?.();
 
-        try {
-            // Clean up current system
-            if (this.systems[this.currentSystem]) {
-                this.cleanupCurrentSystem();
-            }
+    this.stateReady = false;
+    this.systemReady = false;
+    this.isInitialized = false;
+  }
 
-            // Initialize new system
-            this.currentSystem = systemName;
-            await this.initializeSystem(systemName);
+  getCurrentSystemName() {
+    return this.activeSystem;
+  }
 
-            // Apply current parameters to new system
-            if (Object.keys(this.currentParameters).length > 0) {
-                this.setParameters(this.currentParameters);
-            }
+  getCurrentGeometryType() {
+    return this.currentParameters.geometry ?? 0;
+  }
 
-            this.systemReady = true;
-            console.log(`Switched to ${systemName} system`);
-            return true;
+  generateChallengeFromCurrentState() {
+    return {
+      geometryType: this.getCurrentGeometryType(),
+      visualizerSystem: this.getCurrentSystemName(),
+      challengeParameters: {
+        gridDensity: this.currentParameters.gridDensity ?? 15,
+        dimension: this.currentParameters.dimension ?? 3.5,
+        chaos: this.currentParameters.chaos ?? 0.2,
+        morphFactor: this.currentParameters.morphFactor ?? 1,
+      },
+      rotation4D: {
+        xw: this.currentParameters.rot4dXW ?? 0,
+        yw: this.currentParameters.rot4dYW ?? 0,
+        zw: this.currentParameters.rot4dZW ?? 0,
+      },
+    };
+  }
 
-        } catch (error) {
-            console.error(`Failed to switch to ${systemName} system:`, error);
-            return false;
-        }
+  getSystemCapabilities() {
+    return {
+      faceted: {
+        geometries: 8,
+        supports4D: true,
+        audioReactive: true,
+      },
+      quantum: {
+        geometries: 8,
+        supports4D: true,
+        audioReactive: true,
+      },
+      holographic: {
+        geometries: 1,
+        supports4D: true,
+        audioReactive: true,
+      },
+      polychora: {
+        geometries: 6,
+        supports4D: true,
+        audioReactive: true,
+      },
+      hypercube: {
+        geometries: 3,
+        supports4D: true,
+        audioReactive: true,
+      },
+    };
+  }
+
+  explodeBeat(intensity = 1) {
+    this.broadcastToSystems('explodeBeat', intensity);
+  }
+
+  triggerComboFireworks(comboCount) {
+    this.broadcastToSystems('triggerComboFireworks', comboCount);
+  }
+
+  highlightSystemInteractions(eventType, intensity = 1) {
+    const hypercube = this.systems.hypercube;
+    if (hypercube?.explosiveState) {
+      const state = hypercube.explosiveState;
+      switch (eventType) {
+        case 'mega_combo':
+          state.comboFireworks = intensity;
+          state.scoreEuphoria = Math.max(state.scoreEuphoria ?? 0, intensity);
+          break;
+        case 'perfect_precision':
+          state.hyperGeometryMode = 'hypertetrahedron';
+          state.patternIntensity = Math.max(state.patternIntensity ?? 1, 1 + intensity * 0.5);
+          state.glitchIntensity = Math.min(state.glitchIntensity ?? 0.1, 0.1);
+          break;
+        case 'chaos_explosion':
+          state.glitchIntensity = Math.max(state.glitchIntensity ?? 0, intensity);
+          state.rotationChaos = Math.max(state.rotationChaos ?? 0, intensity * 1.2);
+          break;
+        case 'boss_transcendence':
+          state.bossRealityRift = Math.max(state.bossRealityRift ?? 0, intensity);
+          state.dimensionalIntensity = Math.max(state.dimensionalIntensity ?? 4, 4 + intensity * 0.5);
+          break;
+        default:
+          state.patternIntensity = Math.max(state.patternIntensity ?? 1, 1 + intensity * 0.3);
+          break;
+      }
     }
 
-    async initializeSystem(systemName) {
-        const canvas = this.canvas;
-        const gl = this.gl;
+    this.broadcastToSystems('highlightSystemInteractions', eventType, intensity);
+  }
 
-        try {
-            switch (systemName) {
-                case 'faceted':
-                    this.systems.faceted = new FacetedEngine();
-                    if (typeof this.systems.faceted.initialize === 'function') {
-                        await this.systems.faceted.initialize(canvas);
-                    }
-                    break;
+  enemyGlitchStorm(intensity) {
+    this.broadcastToSystems('enemyGlitchStorm', intensity);
+  }
 
-                case 'quantum':
-                    // Pass canvas ID to quantum visualizer
-                    this.systems.quantum = new QuantumEngine(canvas.id || 'game-canvas', 'content', 1.0, 0);
-                    if (typeof this.systems.quantum.initialize === 'function') {
-                        await this.systems.quantum.initialize(canvas);
-                    }
-                    break;
+  damageShockwave(amount) {
+    this.broadcastToSystems('damageShockwave', amount);
+  }
 
-                case 'holographic':
-                    // Pass canvas ID to holographic visualizer
-                    this.systems.holographic = new HolographicEngine(canvas.id || 'game-canvas', 'content', 1.0, 0);
-                    if (typeof this.systems.holographic.initialize === 'function') {
-                        await this.systems.holographic.initialize(canvas);
-                    }
-                    break;
+  powerUpNova(powerLevel) {
+    this.broadcastToSystems('powerUpNova', powerLevel);
+  }
 
-                case 'polychora':
-                    this.systems.polychora = new PolychoraSystem();
-                    if (typeof this.systems.polychora.initialize === 'function') {
-                        await this.systems.polychora.initialize(canvas);
-                    }
-                    break;
+  levelTranscendence(level) {
+    this.broadcastToSystems('levelTranscendence', level);
+  }
 
-                case 'hypercube':
-                    this.systems.hypercube = new HypercubeGameSystem(canvas);
-                    this.systems.hypercube.startExplosion(); // ACTIVATE BOMBASTIC MODE!
-                    console.log('🔥💥 HYPERCUBE GAME SYSTEM ACTIVATED - PREPARE FOR EXPLOSIVE VISUALS! 💥🔥');
-                    break;
-            }
-        } catch (error) {
-            console.warn(`Failed to initialize ${systemName} system, using fallback:`, error);
-            // Create a minimal fallback system
-            this.systems[systemName] = {
-                render: () => {
-                    // Simple fallback rendering
-                    if (this.gl) {
-                        this.gl.clearColor(0.0, 0.0, 0.2, 1.0);
-                        this.gl.clear(this.gl.COLOR_BUFFER_BIT);
-                    }
-                },
-                setParameters: () => {},
-                cleanup: () => {}
-            };
-        }
+  enterBossRealityRift() {
+    this.broadcastToSystems('enterBossRealityRift');
+  }
+
+  setTacticalInfo(infoType, intensity = 1) {
+    const hypercube = this.systems.hypercube;
+    if (hypercube?.setTacticalInfoMode) {
+      hypercube.setTacticalInfoMode(infoType, intensity);
+    }
+  }
+
+  activateHypertetrahedronMode() {
+    const hypercube = this.systems.hypercube;
+    if (hypercube?.explosiveState) {
+      const state = hypercube.explosiveState;
+      state.hyperGeometryMode = 'hypertetrahedron';
+      state.dimensionalIntensity = Math.max(state.dimensionalIntensity ?? 4, 4.5);
+    }
+  }
+
+  triggerTacticalGlitchStorm(intensity = 1) {
+    const hypercube = this.systems.hypercube;
+    if (hypercube?.explosiveState) {
+      const state = hypercube.explosiveState;
+      state.glitchIntensity = Math.max(state.glitchIntensity ?? 0, intensity * 0.8);
+      state.moireDistortion = Math.max(state.moireDistortion ?? 0, intensity * 0.6);
+    }
+    this.broadcastToSystems('triggerTacticalGlitchStorm', intensity);
+  }
+
+  getActiveSystemInstance() {
+    if (this.activeSystem === 'hypercube') {
+      return this.systems.hypercube;
+    }
+    return this.systems[this.activeSystem] || null;
+  }
+
+  broadcastToSystems(methodName, ...args) {
+    const activeSystem = this.getActiveSystemInstance();
+    if (activeSystem && typeof activeSystem[methodName] === 'function') {
+      try {
+        activeSystem[methodName](...args);
+      } catch (error) {
+        this.logger.error(`VisualizerEngine: error calling ${methodName} on ${this.activeSystem}`, error);
+      }
     }
 
-    cleanupCurrentSystem() {
-        const system = this.systems[this.currentSystem];
-        if (system && typeof system.cleanup === 'function') {
-            system.cleanup();
-        }
-
-        // Clear canvas
-        if (this.gl) {
-            this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
-        }
+    const hypercube = this.systems.hypercube;
+    if (hypercube && hypercube !== activeSystem && typeof hypercube[methodName] === 'function') {
+      try {
+        hypercube[methodName](...args);
+      } catch (error) {
+        this.logger.error(`VisualizerEngine: error calling ${methodName} on hypercube`, error);
+      }
     }
-
-    setParameters(parameters) {
-        this.currentParameters = { ...parameters };
-
-        if (!this.systemReady) return;
-
-        const system = this.systems[this.currentSystem];
-        if (system) {
-            // Map generic parameters to system-specific methods
-            this.applyParametersToSystem(system, parameters);
-        }
-    }
-
-    applyParametersToSystem(system, params) {
-        // Apply geometry selection
-        if (params.geometry !== undefined && typeof system.setGeometry === 'function') {
-            system.setGeometry(params.geometry);
-        }
-
-        // Apply 4D rotation parameters
-        if (typeof system.set4DRotation === 'function') {
-            system.set4DRotation(
-                params.rot4dXW || 0,
-                params.rot4dYW || 0,
-                params.rot4dZW || 0
-            );
-        }
-
-        // Apply visual parameters
-        if (typeof system.setVisualParameters === 'function') {
-            system.setVisualParameters({
-                gridDensity: params.gridDensity || 15,
-                morphFactor: params.morphFactor || 1,
-                chaos: params.chaos || 0.2,
-                speed: params.speed || 1,
-                hue: params.hue || 200,
-                intensity: params.intensity || 0.5,
-                saturation: params.saturation || 0.8
-            });
-        }
-
-        // Apply dimension parameter
-        if (params.dimension !== undefined && typeof system.setDimension === 'function') {
-            system.setDimension(params.dimension);
-        }
-
-        // Fallback: try to update parameters via a generic method
-        if (typeof system.updateParameters === 'function') {
-            system.updateParameters(params);
-        }
-    }
-
-    render(timestamp = 0, gameState = {}) {
-        if (!this.systemReady || !this.gl) return;
-
-        const system = this.systems[this.currentSystem];
-        if (system && typeof system.render === 'function') {
-            system.render(timestamp, gameState);
-        }
-
-        // 🎮🔍 UPDATE HYPERCUBE GAME STATE VISUALS FOR TACTICAL INFO 🔍🎮
-        if (this.systems.hypercube && this.systems.hypercube.updateGameStateVisuals) {
-            this.systems.hypercube.updateGameStateVisuals(gameState);
-        }
-
-        // 🔥⚡ AMPLIFY CROSS-SYSTEM CONTRASTS FOR MAXIMUM EXCITEMENT ⚡🔥
-        this.amplifySystemContrasts(gameState);
-    }
-
-    // 💫🔍 TACTICAL INFORMATION OVERLAY FOR CROSS-SYSTEM COMMUNICATION 🔍💫
-
-    setTacticalInfo(infoType, intensity = 1.0) {
-        // Route tactical information to appropriate visualizer systems
-        if (this.systems.hypercube && this.systems.hypercube.setTacticalInfoMode) {
-            this.systems.hypercube.setTacticalInfoMode(infoType, intensity);
-        }
-
-        // Add tactical info display to other systems if they support it
-        console.log(`💫🔍 TACTICAL INFO BROADCAST: ${infoType} (intensity: ${intensity.toFixed(2)}) 🔍💫`);
-    }
-
-    // Switch to hypertetrahedron mode for maximum precision feedback
-    activateHypertetrahedronMode() {
-        if (this.systems.hypercube) {
-            this.systems.hypercube.explosiveState.hyperGeometryMode = 'hypertetrahedron';
-            this.systems.hypercube.explosiveState.dimensionalIntensity = Math.max(
-                this.systems.hypercube.explosiveState.dimensionalIntensity, 4.5
-            );
-            console.log('💫🔍 HYPERTETRAHEDRON MODE ACTIVATED FOR MAXIMUM PRECISION! 🔍💫');
-        }
-    }
-
-    // Enhanced glitch storm for enemy/chaos communication
-    triggerTacticalGlitchStorm(intensity = 1.0) {
-        if (this.systems.hypercube) {
-            this.systems.hypercube.explosiveState.glitchIntensity = Math.max(
-                this.systems.hypercube.explosiveState.glitchIntensity,
-                intensity * 0.8
-            );
-            this.systems.hypercube.explosiveState.moireDistortion = Math.max(
-                this.systems.hypercube.explosiveState.moireDistortion,
-                intensity * 0.6
-            );
-            console.log(`🌪️🔍 TACTICAL GLITCH STORM! Intensity: ${intensity.toFixed(2)} 🔍🌪️`);
-        }
-    }
-
-    // 🔥⚡ CROSS-SYSTEM CONTRAST & HIGHLIGHT AMPLIFICATION SYSTEM ⚡🔥
-
-    amplifySystemContrasts(gameState) {
-        // 💥🌟 CREATE EXPLOSIVE CONTRASTS BETWEEN VISUALIZER SYSTEMS 🌟💥
-
-        // Determine dominant emotion/state for contrast targeting
-        let dominantEmotion = 'harmony';
-        let contrastIntensity = 1.0;
-
-        if (gameState.health < 30) {
-            dominantEmotion = 'critical';
-            contrastIntensity = 2.0;
-        } else if (gameState.bossMode) {
-            dominantEmotion = 'boss';
-            contrastIntensity = 1.8;
-        } else if (gameState.comboMultiplier > 10) {
-            dominantEmotion = 'ecstasy';
-            contrastIntensity = 1.5;
-        } else if (gameState.chaosLevel > 70) {
-            dominantEmotion = 'chaos';
-            contrastIntensity = 1.3;
-        }
-
-        // Apply contrasts to active systems
-        this.applyHypercubeContrasts(dominantEmotion, contrastIntensity);
-        this.applyFacetedContrasts(dominantEmotion, contrastIntensity);
-        this.applyQuantumContrasts(dominantEmotion, contrastIntensity);
-        this.applyHolographicContrasts(dominantEmotion, contrastIntensity);
-
-        console.log(`🔥⚡ SYSTEM CONTRASTS AMPLIFIED! Emotion: ${dominantEmotion}, Intensity: ${contrastIntensity.toFixed(2)} ⚡🔥`);
-    }
-
-    applyHypercubeContrasts(emotion, intensity) {
-        if (!this.systems.hypercube) return;
-
-        const hc = this.systems.hypercube.explosiveState;
-
-        switch (emotion) {
-            case 'critical':
-                // MAXIMUM HYPERTETRAHEDRON PRECISION IN CRISIS
-                hc.hyperGeometryMode = 'hypertetrahedron';
-                hc.glitchIntensity = Math.max(hc.glitchIntensity, intensity * 0.9);
-                hc.colorShiftChaos = Math.max(hc.colorShiftChaos, intensity * 0.7);
-                hc.dimensionalIntensity = Math.max(hc.dimensionalIntensity, 4.8);
-                break;
-
-            case 'boss':
-                // ULTIMATE GEOMETRIC WARFARE MODE
-                hc.hyperGeometryMode = 'hypertetrahedron';
-                hc.gridViolence = Math.max(hc.gridViolence, 15.0 + intensity * 10.0);
-                hc.universeModifier = Math.max(hc.universeModifier, intensity * 2.0);
-                hc.moireDistortion = Math.max(hc.moireDistortion, intensity * 0.8);
-                break;
-
-            case 'ecstasy':
-                // EUPHORIC GEOMETRIC TRANSCENDENCE
-                hc.patternIntensity = Math.max(hc.patternIntensity, 1.5 + intensity * 0.8);
-                hc.dimensionalIntensity = Math.max(hc.dimensionalIntensity, 4.5 + intensity * 0.3);
-                hc.morphExplosion = Math.max(hc.morphExplosion, intensity * 0.6);
-                break;
-
-            case 'chaos':
-                // CHAOTIC GEOMETRIC STORM
-                hc.rotationChaos = Math.max(hc.rotationChaos, intensity * 1.2);
-                hc.colorShiftChaos = Math.max(hc.colorShiftChaos, intensity * 0.8);
-                hc.glitchIntensity = Math.max(hc.glitchIntensity, intensity * 0.6);
-                break;
-
-            default:
-                // HARMONIC BALANCE
-                hc.patternIntensity = Math.max(hc.patternIntensity, 1.0 + intensity * 0.3);
-                break;
-        }
-    }
-
-    applyFacetedContrasts(emotion, intensity) {
-        // Apply contrasting effects to faceted system if available
-        if (!this.systems.faceted) return;
-
-        // Faceted system provides GEOMETRIC STRUCTURE contrast to fluid systems
-        if (this.systems.faceted.setParameters) {
-            const contrastParams = {
-                morphFactor: emotion === 'chaos' ? 0.8 * intensity : 0.2,
-                gridDensity: emotion === 'boss' ? 15 + intensity * 5 : 8,
-                speed: emotion === 'ecstasy' ? 1.5 * intensity : 0.8,
-                chaos: emotion === 'critical' ? intensity * 0.9 : 0.3
-            };
-
-            // Apply parameters that CONTRAST with current hypercube state
-            this.systems.faceted.setParameters(contrastParams);
-            console.log('🔷⚡ FACETED GEOMETRIC CONTRAST APPLIED! ⚡🔷');
-        }
-    }
-
-    applyQuantumContrasts(emotion, intensity) {
-        // Apply contrasting quantum effects if quantum system available
-        if (!this.systems.quantum || !this.systems.quantum.setParameters) return;
-
-        // Quantum system provides PROBABILITY CLOUD contrast to precise geometry
-        const quantumParams = {
-            particleDensity: emotion === 'ecstasy' ? 2000 + intensity * 1000 : 1000,
-            waveIntensity: emotion === 'chaos' ? intensity * 1.5 : 0.8,
-            quantumTunneling: emotion === 'critical' ? intensity * 0.8 : 0.4,
-            uncertainty: emotion === 'boss' ? intensity * 1.2 : 0.6
-        };
-
-        this.systems.quantum.setParameters(quantumParams);
-        console.log('⚛️⚡ QUANTUM PROBABILITY CONTRAST APPLIED! ⚡⚛️');
-    }
-
-    applyHolographicContrasts(emotion, intensity) {
-        // Apply contrasting holographic effects if holographic system available
-        if (!this.systems.holographic || !this.systems.holographic.updateState) return;
-
-        // Holographic system provides DEPTH ILLUSION contrast to flat interfaces
-        const holoState = {
-            layerSeparation: emotion === 'boss' ? intensity * 50 : 20,
-            interferencePattern: emotion === 'chaos' ? intensity * 0.9 : 0.4,
-            depthIntensity: emotion === 'ecstasy' ? intensity * 1.3 : 0.8,
-            hologramStability: emotion === 'critical' ? 1.0 - intensity * 0.6 : 0.9
-        };
-
-        this.systems.holographic.updateState(holoState);
-        console.log('🌈⚡ HOLOGRAPHIC DEPTH CONTRAST APPLIED! ⚡🌈');
-    }
-
-    // 💫🎆 EXPLOSIVE CROSS-SYSTEM HIGHLIGHTING EFFECTS 🎆💫
-
-    highlightSystemInteractions(eventType, intensity = 1.0) {
-        // Create EXPLOSIVE highlighting effects across ALL systems simultaneously
-        switch (eventType) {
-            case 'mega_combo':
-                this.triggerMegaComboHighlight(intensity);
-                break;
-
-            case 'perfect_precision':
-                this.triggerPerfectPrecisionHighlight(intensity);
-                break;
-
-            case 'chaos_explosion':
-                this.triggerChaosExplosionHighlight(intensity);
-                break;
-
-            case 'boss_transcendence':
-                this.triggerBossTranscendenceHighlight(intensity);
-                break;
-
-            default:
-                this.triggerUniversalHighlight(intensity);
-                break;
-        }
-
-        console.log(`💫🎆 CROSS-SYSTEM HIGHLIGHT: ${eventType} (intensity: ${intensity.toFixed(2)}) 🎆💫`);
-    }
-
-    triggerMegaComboHighlight(intensity) {
-        // 🔥✨ ALL SYSTEMS EXPLODE WITH COMBO CELEBRATION ✨🔥
-        if (this.systems.hypercube) {
-            this.systems.hypercube.explosiveState.comboFireworks = intensity;
-            this.systems.hypercube.explosiveState.cosmicEuphoria = intensity;
-        }
-
-        // Contrast: While hypercube explodes, other systems provide structured celebration
-        if (this.systems.faceted) {
-            this.systems.faceted.setParameters({ speed: 2.0 * intensity, chaos: 0.1 });
-        }
-
-        console.log('🔥✨ MEGA COMBO: All systems synchronized in euphoric celebration! ✨🔥');
-    }
-
-    triggerPerfectPrecisionHighlight(intensity) {
-        // 💫🔍 HYPERTETRAHEDRON PRECISION WITH SYSTEM-WIDE CLARITY 🔍💫
-        if (this.systems.hypercube) {
-            this.systems.hypercube.explosiveState.hyperGeometryMode = 'hypertetrahedron';
-            this.systems.hypercube.explosiveState.patternIntensity = 2.0;
-            this.systems.hypercube.explosiveState.glitchIntensity *= 0.2; // Crystal clarity
-        }
-
-        // Contrast: Other systems become ultra-stable to highlight precision
-        if (this.systems.quantum) {
-            this.systems.quantum.setParameters({ uncertainty: 0.1, stability: 0.95 });
-        }
-
-        console.log('💫🔍 PERFECT PRECISION: Crystal clear hypertetrahedron with stable contrasts! 🔍💫');
-    }
-
-    triggerChaosExplosionHighlight(intensity) {
-        // 🌪️💥 MAXIMUM CHAOS ACROSS ALL SYSTEMS SIMULTANEOUSLY 💥🌪️
-        if (this.systems.hypercube) {
-            this.systems.hypercube.explosiveState.glitchIntensity = intensity;
-            this.systems.hypercube.explosiveState.colorShiftChaos = intensity;
-            this.systems.hypercube.explosiveState.rotationChaos = intensity * 1.5;
-        }
-
-        // Complement: Other systems add their own chaos flavors
-        if (this.systems.quantum) {
-            this.systems.quantum.setParameters({ chaos: intensity, waveIntensity: intensity * 1.2 });
-        }
-
-        console.log('🌪️💥 CHAOS EXPLOSION: All systems in synchronized chaos storm! 💥🌪️');
-    }
-
-    triggerBossTranscendenceHighlight(intensity) {
-        // 🐲🌌 ULTIMATE BOSS MODE ACROSS ALL REALITY 🌌🐲
-        if (this.systems.hypercube) {
-            this.systems.hypercube.explosiveState.bossRealityRift = intensity;
-            this.systems.hypercube.explosiveState.dimensionalIntensity = 4.8;
-            this.systems.hypercube.explosiveState.universeModifier = intensity * 2.5;
-        }
-
-        // All systems shift to maximum intensity boss mode
-        if (this.systems.faceted) {
-            this.systems.faceted.setParameters({ morphFactor: intensity * 0.8, gridDensity: 20 });
-        }
-
-        console.log('🐲🌌 BOSS TRANSCENDENCE: All reality systems at maximum dimensional warfare! 🌌🐲');
-    }
-
-    triggerUniversalHighlight(intensity) {
-        // 🌟💫 UNIVERSAL HARMONY HIGHLIGHT ACROSS ALL SYSTEMS 💫🌟
-        if (this.systems.hypercube) {
-            this.systems.hypercube.explosiveState.patternIntensity = 1.0 + intensity * 0.5;
-            this.systems.hypercube.explosiveState.cosmicEuphoria = intensity * 0.6;
-        }
-
-        console.log('🌟💫 UNIVERSAL HIGHLIGHT: Harmonic resonance across all systems! 💫🌟');
-    }
-
-    handleResize(width, height) {
-        this.canvas.width = width;
-        this.canvas.height = height;
-
-        if (this.gl) {
-            this.gl.viewport(0, 0, width, height);
-        }
-
-        // Notify current system of resize
-        const system = this.systems[this.currentSystem];
-        if (system && typeof system.handleResize === 'function') {
-            system.handleResize(width, height);
-        }
-
-        if (this.canvasManager) {
-            this.canvasManager.handleResize(width, height);
-        }
-    }
-
-    // Game-specific methods for challenge generation
-    getCurrentGeometryType() {
-        return this.currentParameters.geometry || 0;
-    }
-
-    getCurrentSystemName() {
-        return this.currentSystem;
-    }
-
-    getParameterValue(paramName) {
-        return this.currentParameters[paramName];
-    }
-
-    // Audio reactivity integration
-    onAudioData(audioData) {
-        const system = this.systems[this.currentSystem];
-        if (system && typeof system.onAudioData === 'function') {
-            system.onAudioData(audioData);
-        }
-    }
-
-    onBeat(beatData) {
-        const system = this.systems[this.currentSystem];
-        if (system && typeof system.onBeat === 'function') {
-            system.onBeat(beatData);
-        }
-    }
-
-    // Challenge generation helpers
-    generateChallengeFromCurrentState() {
-        const geometry = this.getCurrentGeometryType();
-        const systemName = this.getCurrentSystemName();
-        const params = this.currentParameters;
-
-        return {
-            geometryType: geometry,
-            visualizerSystem: systemName,
-            challengeParameters: {
-                gridDensity: params.gridDensity || 15,
-                dimension: params.dimension || 3.5,
-                chaos: params.chaos || 0.2,
-                morphFactor: params.morphFactor || 1
-            },
-            rotation4D: {
-                xw: params.rot4dXW || 0,
-                yw: params.rot4dYW || 0,
-                zw: params.rot4dZW || 0
-            }
-        };
-    }
-
-    // Utility methods for game integration
-    getSystemCapabilities() {
-        return {
-            faceted: {
-                geometries: 8, // 0-7
-                supports4D: true,
-                audioReactive: true
-            },
-            quantum: {
-                geometries: 8,
-                supports4D: true,
-                audioReactive: true,
-                specialFeature: 'velocity_tracking'
-            },
-            holographic: {
-                geometries: 1, // Single holographic mode
-                supports4D: true,
-                audioReactive: true,
-                specialFeature: 'shimmer_effects'
-            },
-            polychora: {
-                geometries: 6, // 4D polytopes
-                supports4D: true,
-                audioReactive: true,
-                specialFeature: 'true_4d_math'
-            },
-            hypercube: {
-                geometries: 3, // hypercube, hypersphere, hypertetrahedron
-                supports4D: true,
-                audioReactive: true,
-                specialFeature: 'BOMBASTIC_EXPLOSIONS'
-            }
-        };
-    }
-
-    // 🔥💥 BOMBASTIC GAME EVENT METHODS FOR MAXIMUM EXCITEMENT! 💥🔥
-
-    explodeBeat(intensity = 1.0) {
-        // Trigger beat explosion across ALL systems for MAXIMUM IMPACT
-        console.log(`🎵💥 SYSTEM-WIDE BEAT EXPLOSION! Intensity: ${intensity.toFixed(2)}`);
-
-        // Trigger beat in current system
-        const system = this.systems[this.currentSystem];
-        if (system) {
-            if (typeof system.explodeBeat === 'function') {
-                system.explodeBeat(intensity);
-            } else if (typeof system.triggerClick === 'function') {
-                // Fallback for other visualizers
-                system.triggerClick(0.5, 0.5);
-                if (system.clickIntensity !== undefined) {
-                    system.clickIntensity = intensity;
-                }
-            }
-        }
-
-        // Trigger explosions in hypercube system if available
-        if (this.systems.hypercube && this.systems.hypercube.explodeBeat) {
-            this.systems.hypercube.explodeBeat(intensity);
-        }
-    }
-
-    triggerComboFireworks(comboCount) {
-        console.log(`🔥✨ COMBO FIREWORKS ACROSS ALL SYSTEMS! ${comboCount}x MULTIPLIER!`);
-
-        // Trigger combo effects in current system
-        const system = this.systems[this.currentSystem];
-        if (system && typeof system.triggerMorphPulse === 'function') {
-            system.triggerMorphPulse(comboCount / 10.0);
-        }
-
-        // Special hypercube combo fireworks
-        if (this.systems.hypercube && this.systems.hypercube.triggerComboFireworks) {
-            this.systems.hypercube.triggerComboFireworks(comboCount);
-        }
-
-        // Cross-system contrast effects
-        this.createSystemContrast('combo', comboCount / 10.0);
-    }
-
-    damageShockwave(damageAmount) {
-        console.log(`💥⚡ DAMAGE SHOCKWAVE! ${damageAmount} damage - VISUAL CHAOS ACTIVATED!`);
-
-        // Create damage effects across systems
-        const system = this.systems[this.currentSystem];
-        if (system && typeof system.triggerChaos === 'function') {
-            system.triggerChaos(damageAmount / 20.0);
-        }
-
-        // Hypercube damage shockwave
-        if (this.systems.hypercube && this.systems.hypercube.damageShockwave) {
-            this.systems.hypercube.damageShockwave(damageAmount);
-        }
-
-        // Create red flash across all systems
-        this.createSystemContrast('damage', damageAmount / 100.0);
-    }
-
-    powerUpNova(powerLevel) {
-        console.log(`⭐💫 POWER-UP NOVA EXPLOSION! Level: ${powerLevel}`);
-
-        // Switch to hypercube system for maximum visual impact
-        if (this.currentSystem !== 'hypercube' && this.systems.hypercube) {
-            this.switchToSystem('hypercube');
-        }
-
-        // Trigger power-up effects
-        if (this.systems.hypercube && this.systems.hypercube.powerUpNova) {
-            this.systems.hypercube.powerUpNova(powerLevel);
-        }
-
-        this.createSystemContrast('powerup', powerLevel);
-    }
-
-    enemyGlitchStorm(intensity) {
-        console.log(`👹🌪️ ENEMY GLITCH STORM! Intensity: ${intensity.toFixed(2)}`);
-
-        // Apply glitch effects across systems
-        const system = this.systems[this.currentSystem];
-        if (system && typeof system.triggerGlitch === 'function') {
-            system.triggerGlitch(intensity);
-        }
-
-        // Hypercube glitch storm
-        if (this.systems.hypercube && this.systems.hypercube.enemyGlitchStorm) {
-            this.systems.hypercube.enemyGlitchStorm(intensity);
-        }
-
-        this.createSystemContrast('glitch', intensity);
-    }
-
-    enterBossRealityRift() {
-        console.log(`🐲🌌 BOSS REALITY RIFT! SWITCHING TO HYPERTETRAHEDRON MODE!`);
-
-        // Force switch to hypercube system with hypertetrahedron mode
-        this.switchToSystem('hypercube');
-
-        if (this.systems.hypercube && this.systems.hypercube.enterBossRealityRift) {
-            this.systems.hypercube.enterBossRealityRift();
-        }
-
-        // Apply reality rift effects across all systems
-        this.createSystemContrast('boss', 1.0);
-    }
-
-    levelTranscendence(newLevel) {
-        console.log(`🚀🌟 LEVEL TRANSCENDENCE! Level ${newLevel} - GEOMETRY EVOLUTION!`);
-
-        // Choose geometry system based on level for visual variety
-        const systemChoices = ['faceted', 'quantum', 'holographic', 'hypercube'];
-        const targetSystem = systemChoices[newLevel % systemChoices.length];
-
-        this.switchToSystem(targetSystem);
-
-        // Trigger transcendence effects
-        if (this.systems.hypercube && this.systems.hypercube.levelTranscendence) {
-            this.systems.hypercube.levelTranscendence(newLevel);
-        }
-
-        this.createSystemContrast('transcendence', 1.0);
-    }
-
-    // Create contrasting effects between systems for MAXIMUM VISUAL IMPACT
-    createSystemContrast(effectType, intensity) {
-        const contrastEffects = {
-            'combo': () => {
-                // Bright explosions with color shifts
-                this.applyGlobalColorShift(intensity * 60);
-                this.applyGlobalIntensityBoost(intensity * 0.5);
-            },
-            'damage': () => {
-                // Red flashes and chaos
-                this.applyGlobalColorShift(-30 * intensity); // Shift toward red
-                this.applyGlobalChaos(intensity * 0.8);
-            },
-            'powerup': () => {
-                // Golden glow and smooth morphing
-                this.applyGlobalColorShift(45 * intensity); // Golden yellow
-                this.applyGlobalMorphing(intensity * 0.6);
-            },
-            'glitch': () => {
-                // Chaos and distortion across all systems
-                this.applyGlobalChaos(intensity);
-                this.applyGlobalGlitch(intensity);
-            },
-            'boss': () => {
-                // Purple/magenta reality distortion
-                this.applyGlobalColorShift(300); // Magenta
-                this.applyGlobalIntensityBoost(1.0);
-                this.applyGlobalMorphing(1.0);
-            },
-            'transcendence': () => {
-                // Rainbow explosion
-                this.applyGlobalColorShift(intensity * 360);
-                this.applyGlobalIntensityBoost(1.0);
-            }
-        };
-
-        if (contrastEffects[effectType]) {
-            contrastEffects[effectType]();
-        }
-    }
-
-    // Global effect application methods
-    applyGlobalColorShift(hueShift) {
-        // Apply color shift to all compatible systems
-        Object.keys(this.systems).forEach(systemName => {
-            const system = this.systems[systemName];
-            if (system && typeof system.shiftHue === 'function') {
-                system.shiftHue(hueShift);
-            }
-        });
-    }
-
-    applyGlobalIntensityBoost(boost) {
-        Object.keys(this.systems).forEach(systemName => {
-            const system = this.systems[systemName];
-            if (system && typeof system.boostIntensity === 'function') {
-                system.boostIntensity(boost);
-            }
-        });
-    }
-
-    applyGlobalChaos(chaosLevel) {
-        Object.keys(this.systems).forEach(systemName => {
-            const system = this.systems[systemName];
-            if (system && typeof system.applyChaos === 'function') {
-                system.applyChaos(chaosLevel);
-            }
-        });
-    }
-
-    applyGlobalMorphing(morphLevel) {
-        Object.keys(this.systems).forEach(systemName => {
-            const system = this.systems[systemName];
-            if (system && typeof system.applyMorphing === 'function') {
-                system.applyMorphing(morphLevel);
-            }
-        });
-    }
-
-    applyGlobalGlitch(glitchLevel) {
-        Object.keys(this.systems).forEach(systemName => {
-            const system = this.systems[systemName];
-            if (system && typeof system.applyGlitch === 'function') {
-                system.applyGlitch(glitchLevel);
-            }
-        });
-    }
-
-    // Audio explosive reactivity for ALL systems
-    updateAudioExplosion(audioData) {
-        // Send audio data to hypercube system for explosive processing
-        if (this.systems.hypercube && this.systems.hypercube.updateAudioExplosion) {
-            this.systems.hypercube.updateAudioExplosion(audioData);
-        }
-
-        // Apply to current system as well
-        if (this.systems[this.currentSystem] && typeof this.systems[this.currentSystem].onAudioData === 'function') {
-            this.systems[this.currentSystem].onAudioData(audioData);
-        }
-
-        // Trigger explosive events based on audio intensity
-        if (audioData.bass > 0.8) {
-            this.explodeBeat(audioData.bass);
-        }
-
-        if (audioData.high > 0.9 && Math.random() < 0.3) {
-            this.enemyGlitchStorm(audioData.high);
-        }
-
-        if (audioData.energy > 0.95) {
-            this.triggerComboFireworks(Math.floor(audioData.energy * 20));
-        }
-    }
-
-    cleanup() {
-        // Cleanup all systems
-        Object.keys(this.systems).forEach(systemName => {
-            const system = this.systems[systemName];
-            if (system && typeof system.cleanup === 'function') {
-                system.cleanup();
-            }
-        });
-
-        if (this.reactivityManager) {
-            this.reactivityManager.cleanup();
-        }
-
-        if (this.canvasManager) {
-            this.canvasManager.cleanup();
-        }
-    }
+  }
 }
