@@ -1,0 +1,18 @@
+# Architecture Refactor Progress
+
+## Completed Work
+- **Canvas lifecycle stabilisation** – Implemented `CanvasResourcePool` to preallocate per-system layer stacks, register pooled contexts with the resource manager, and coordinate resize handling so visualization swaps no longer churn the DOM or drop WebGL state.【F:src/core/CanvasManager.js†L1-L195】【F:src/core/CanvasManager.js†L197-L334】
+- **Engine orchestration foundation** – Added an `EngineCoordinator` that initialises engines in order, provisions shared buffers/textures/shaders once, enforces lifecycle contracts, and relays parameter updates and broadcasts across the active system set.【F:src/core/EngineCoordinator.js†L1-L204】【F:src/core/EngineCoordinator.js†L219-L357】
+- **GPU resource management** – Established a `ResourceManager` that registers contexts, tracks buffers/textures/programs, monitors memory pressure, and exposes helpers for common assets like gradients and noise fields.【F:src/core/ResourceManager.js†L1-L160】【F:src/core/ResourceManager.js†L222-L420】
+- **Predictable state container** – Delivered a Redux-style `StateManager` with domain reducers, validation/persistence middleware, bounded history, and localStorage restore hooks to centralise gameplay, audio, UI, and system state.【F:src/core/StateManager.js†L1-L120】【F:src/core/StateManager.js†L224-L520】
+- **Visualizer facade integration** – Refactored `VisualizerEngine` to assemble the pool/coordinator/managers, mirror audio analytics into state, route gameplay events through broadcasts, and keep visualization parameters aligned with the store.【F:src/core/VisualizerEngine.js†L1-L252】【F:src/core/VisualizerEngine.js†L264-L512】
+- **Layered shader rebuild** – Replaced bespoke per-system implementations with a shared `BaseLayeredEngine` that clones shared GPU blueprints through the `ResourceManager`, renders pooled canvases with coordinated shader pipelines, and centralises audio/gameplay reactivity across all engines.【F:src/core/BaseLayeredEngine.js†L1-L409】【F:src/core/Engine.js†L1-L69】【F:src/quantum/QuantumEngine.js†L1-L75】【F:src/holograms/RealHolographicSystem.js†L1-L70】【F:src/core/PolychoraSystem.js†L1-L79】
+- **Resource usage tracking** – Captured shared buffer/texture/shader ownership per engine and mapped pooled resource handles to durable IDs so the coordinator can record attachment/detachment against the ResourceManager audit trail.【F:src/core/ResourceManager.js†L220-L360】【F:src/core/EngineCoordinator.js†L1-L192】
+- **Hypercube fallback integration** – Provisioned dedicated pooled canvases and refactored the hypercube visualizer to consume pooled WebGL contexts, enabling seamless mode toggles without recreating contexts.【F:src/core/CanvasManager.js†L10-L86】【F:src/visualizers/HypercubeGameSystem.js†L1-L120】【F:src/core/VisualizerEngine.js†L180-L224】
+
+## Remaining Work Before Refactor & Testing Break
+- **Test & validation harness** – Automated tests remain absent; once engines adopt the new interfaces, add orchestration smoke tests (initialisation, switching, teardown) and state persistence checks before the planned testing break.【F:src/core/VisualizerEngine.js†L114-L159】【F:src/core/StateManager.js†L401-L476】
+
+## Next Steps
+1. Introduce minimal integration tests that exercise engine switching, state restoration, and resource cleanup to validate the refactor before pausing for the testing break.
+2. Capture visual baselines for the new shader pipelines to confirm parity with the original systems before further optimisation.
