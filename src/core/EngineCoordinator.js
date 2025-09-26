@@ -312,6 +312,30 @@ export class EngineCoordinator {
     }
   }
 
+  broadcast(methodName, ...args) {
+    if (!methodName) {
+      return false;
+    }
+
+    let handled = false;
+
+    this.engines.forEach((engine, systemName) => {
+      const fn = engine?.[methodName];
+      if (typeof fn !== 'function') {
+        return;
+      }
+
+      try {
+        fn.apply(engine, args);
+        handled = true;
+      } catch (error) {
+        console.error(`EngineCoordinator: broadcast ${methodName} failed for ${systemName}`, error);
+      }
+    });
+
+    return handled;
+  }
+
   handleRenderingError(systemName, error) {
     const resource = this.canvasPool.getCanvasResources(systemName, 0);
     if (resource?.context?.isContextLost?.()) {
