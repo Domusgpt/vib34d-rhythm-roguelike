@@ -5,13 +5,36 @@
  */
 
 export class HypercubeGameSystem {
-    constructor(canvas) {
-        this.canvas = canvas;
-        this.gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    constructor(options = {}) {
+        const {
+            canvas,
+            canvasResources = null,
+            resourceManager = null,
+            systemName = 'hypercube',
+        } = typeof options === 'object' ? options : { canvas: options };
+
+        this.canvasResources = canvasResources;
+        this.resourceManager = resourceManager;
+        this.systemName = systemName;
+
+        const pooledCanvas = canvasResources?.canvas ?? null;
+        this.canvas = pooledCanvas || canvas;
+
+        if (!this.canvas) {
+            throw new Error('HypercubeGameSystem requires a canvas element');
+        }
+
+        const pooledContext = canvasResources?.context ?? null;
+        this.gl = pooledContext
+            || this.canvas.getContext('webgl2')
+            || this.canvas.getContext('webgl')
+            || this.canvas.getContext('experimental-webgl');
 
         if (!this.gl) {
             throw new Error('WebGL not supported - cannot create BOMBASTIC experience');
         }
+
+        this.contextId = canvasResources?.contextId ?? null;
 
         // HYPER BOMBASTIC GAME STATE - NOT BORING PARAMETERS!
         this.explosiveState = {
@@ -721,6 +744,26 @@ export class HypercubeGameSystem {
         this.gl.vertexAttribPointer(aPositionLoc, 2, this.gl.FLOAT, false, 0, 0);
 
         this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+    }
+
+    handleResize(width, height) {
+        if (!this.canvas || !this.gl) {
+            return;
+        }
+
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const pixelWidth = Math.max(1, Math.floor(width * dpr));
+        const pixelHeight = Math.max(1, Math.floor(height * dpr));
+
+        if (this.canvas.width !== pixelWidth || this.canvas.height !== pixelHeight) {
+            this.canvas.width = pixelWidth;
+            this.canvas.height = pixelHeight;
+        }
+
+        this.canvas.style.width = `${width}px`;
+        this.canvas.style.height = `${height}px`;
+
+        this.gl.viewport(0, 0, pixelWidth, pixelHeight);
     }
 
     startExplosion() {

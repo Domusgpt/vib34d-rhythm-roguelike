@@ -1,0 +1,8 @@
+{
+  "name": "vib34d-rhythm-roguelike",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node tests/run-tests.mjs"
+  }
+}
