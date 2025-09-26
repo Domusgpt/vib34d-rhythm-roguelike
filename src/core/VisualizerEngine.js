@@ -108,14 +108,16 @@ export class VisualizerEngine {
                     break;
 
                 case 'quantum':
-                    this.systems.quantum = new QuantumEngine();
+                    // Pass canvas ID to quantum visualizer
+                    this.systems.quantum = new QuantumEngine(canvas.id || 'game-canvas', 'content', 1.0, 0);
                     if (typeof this.systems.quantum.initialize === 'function') {
                         await this.systems.quantum.initialize(canvas);
                     }
                     break;
 
                 case 'holographic':
-                    this.systems.holographic = new HolographicEngine();
+                    // Pass canvas ID to holographic visualizer
+                    this.systems.holographic = new HolographicEngine(canvas.id || 'game-canvas', 'content', 1.0, 0);
                     if (typeof this.systems.holographic.initialize === 'function') {
                         await this.systems.holographic.initialize(canvas);
                     }

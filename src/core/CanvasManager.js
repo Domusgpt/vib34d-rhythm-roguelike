@@ -7,6 +7,22 @@ export class CanvasManager {
   constructor() {
     this.currentSystem = null;
     this.currentEngine = null;
+    this.mainCanvas = null;
+  }
+
+  initialize(canvas) {
+    console.log('🎮 Initializing CanvasManager with canvas:', canvas?.id || 'unknown');
+    this.mainCanvas = canvas;
+
+    // Ensure canvas dimensions are set properly
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width || window.innerWidth;
+      canvas.height = rect.height || window.innerHeight;
+      console.log(`📐 Canvas initialized: ${canvas.width}x${canvas.height}`);
+    }
+
+    return this;
   }
 
   async switchToSystem(systemName, engineClasses) {

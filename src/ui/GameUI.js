@@ -103,7 +103,7 @@ export class GameUI {
 
     setupHapticFeedback() {
         // Initialize navigator vibration API for tactile feedback
-        this.canVibrate = navigator.vibrate && typeof navigator.vibrate === 'function';
+        this.canVibrate = false; // Disabled to prevent blocked calls without user interaction
         console.log(this.canVibrate ? '📳 HAPTIC FEEDBACK READY!' : '⚡ Visual feedback only');
     }
 
