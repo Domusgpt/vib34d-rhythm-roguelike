@@ -1,65 +1,51 @@
 /**
  * CanvasResourcePool
- * Modernized canvas management that pre-allocates and reuses canvases
- * across visualization systems. Prevents expensive DOM churn and WebGL
- * context loss described in the comprehensive architecture analysis.
+ * ------------------------------------------------------------
+ * Provides the canvas lifecycle management described in the
+ * architecture documents. Every visualisation system receives a
+ * stable set of canvases and WebGL contexts so that mode switching no
+ * longer causes DOM churn or context loss.
  */
 
-const SYSTEM_NAMES = ['faceted', 'quantum', 'holographic', 'polychora'];
-const LAYER_NAMES = ['background', 'shadow', 'content', 'highlight', 'accent'];
+const DEFAULT_SYSTEMS = ['faceted', 'quantum', 'holographic', 'polychora'];
+const DEFAULT_LAYER_NAMES = ['background', 'content', 'effects'];
 
 export class CanvasResourcePool {
-  constructor(options = {}) {
+  constructor({ systems = DEFAULT_SYSTEMS, layerNames = DEFAULT_LAYER_NAMES, resourceManager = null } = {}) {
+    this.systems = systems;
+    this.layerNames = layerNames;
+    this.resourceManager = resourceManager;
+
+    this.containerElements = new Map();
     this.canvases = new Map(); // system -> [canvas]
-    this.contexts = new Map(); // canvas -> WebGL context
-    this.containerElements = new Map(); // system -> container element
-    this.contextIds = new Map(); // canvas -> contextId
+    this.contextRecords = new Map(); // canvas -> { context, contextId }
     this.activeSystem = null;
-
-    this.maxLayersPerSystem = options.maxLayersPerSystem || LAYER_NAMES.length;
-    this.contextAttributes = {
-      alpha: true,
-      antialias: true,
-      preserveDrawingBuffer: false,
-      powerPreference: 'high-performance',
-      ...options.contextAttributes,
-    };
-
-    this.resourceManager = options.resourceManager || null;
-    this.resizeListener = null;
+    this.resizeHandler = null;
   }
 
-  /**
-   * Initialize containers, canvases, and resize listeners.
-   */
   initialize() {
-    this.createContainerElements();
-    this.preAllocateCanvases();
-    this.setupResizeHandler();
+    this.ensureContainers();
+    this.preallocateCanvases();
+    this.attachResizeListener();
   }
 
-  /**
-   * Ensure container elements exist for each visualization system.
-   */
-  createContainerElements() {
+  ensureContainers() {
     const root = document.getElementById('game-container') || document.body;
 
-    SYSTEM_NAMES.forEach((systemName) => {
+    this.systems.forEach((systemName) => {
       const containerId = systemName === 'faceted' ? 'vib34dLayers' : `${systemName}Layers`;
       let container = document.getElementById(containerId);
-
       if (!container) {
         container = document.createElement('div');
         container.id = containerId;
         container.className = 'visualization-container';
         Object.assign(container.style, {
           position: 'absolute',
-          top: '0',
-          left: '0',
+          inset: '0',
           width: '100%',
           height: '100%',
-          display: 'none',
           pointerEvents: 'none',
+          display: 'none',
         });
         root.appendChild(container);
       }
@@ -68,88 +54,52 @@ export class CanvasResourcePool {
     });
   }
 
-  /**
-   * Pre-create canvases and WebGL contexts for every system/layer combo.
-   */
-  preAllocateCanvases() {
+  preallocateCanvases() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const viewWidth = window.innerWidth;
-    const viewHeight = window.innerHeight;
+    const { innerWidth: viewWidth, innerHeight: viewHeight } = window;
 
-    SYSTEM_NAMES.forEach((systemName) => {
+    this.systems.forEach((systemName) => {
       const container = this.containerElements.get(systemName);
       if (!container) {
-        console.warn(`CanvasResourcePool: Missing container for ${systemName}`);
         return;
       }
 
       const canvases = [];
+      this.layerNames.forEach((layerName, index) => {
+        const canvas = document.createElement('canvas');
+        canvas.id = this.getCanvasId(systemName, layerName);
+        canvas.className = 'visualization-layer';
+        canvas.width = viewWidth * dpr;
+        canvas.height = viewHeight * dpr;
+        Object.assign(canvas.style, {
+          position: 'absolute',
+          inset: '0',
+          width: '100%',
+          height: '100%',
+          zIndex: String(index + 1),
+          pointerEvents: 'none',
+        });
 
-      for (let layerIndex = 0; layerIndex < this.maxLayersPerSystem; layerIndex += 1) {
-        const canvas = this.createCanvas(systemName, layerIndex, viewWidth, viewHeight, dpr);
         container.appendChild(canvas);
         canvases.push(canvas);
 
-        this.initializeContext(canvas, systemName, layerIndex);
-      }
+        const gl = canvas.getContext('webgl2', { antialias: true })
+          || canvas.getContext('webgl', { antialias: true });
+        if (gl) {
+          const contextId = this.getContextId(systemName, index);
+          gl.viewport(0, 0, canvas.width, canvas.height);
+          this.contextRecords.set(canvas, { context: gl, contextId });
+          this.resourceManager?.registerWebGLContext(contextId, gl);
+        }
+      });
 
       this.canvases.set(systemName, canvases);
     });
   }
 
-  createCanvas(systemName, layerIndex, viewWidth, viewHeight, dpr) {
-    const canvas = document.createElement('canvas');
-    const baseName = LAYER_NAMES[layerIndex] || `layer-${layerIndex}`;
-    const prefix = systemName === 'faceted' ? '' : `${systemName}-`;
-    const canvasId = `${prefix}${baseName}-canvas`;
-
-    canvas.id = canvasId;
-    canvas.className = 'visualization-layer';
-
-    canvas.width = viewWidth * dpr;
-    canvas.height = viewHeight * dpr;
-    Object.assign(canvas.style, {
-      position: 'absolute',
-      top: '0',
-      left: '0',
-      width: '100%',
-      height: '100%',
-      zIndex: layerIndex + 1,
-      pointerEvents: 'none',
-    });
-
-    return canvas;
-  }
-
-  initializeContext(canvas, systemName, layerIndex) {
-    try {
-      const gl = canvas.getContext('webgl2', this.contextAttributes)
-        || canvas.getContext('webgl', this.contextAttributes);
-
-      if (gl) {
-        gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(0, 0, 0, 0);
-        this.contexts.set(canvas, gl);
-
-        if (this.resourceManager) {
-          const contextId = this.getContextId(systemName, layerIndex);
-          this.contextIds.set(canvas, contextId);
-          this.resourceManager.registerWebGLContext(contextId, gl);
-        }
-      } else {
-        console.warn(`CanvasResourcePool: Unable to create WebGL context for ${systemName} layer ${layerIndex}`);
-      }
-    } catch (error) {
-      console.error(`CanvasResourcePool: WebGL initialization failed for ${systemName} layer ${layerIndex}`, error);
-    }
-  }
-
-  /**
-   * Swap visibility between systems without destroying WebGL contexts.
-   */
   switchToSystem(systemName) {
-    if (!SYSTEM_NAMES.includes(systemName)) {
-      console.warn(`CanvasResourcePool: Unknown system ${systemName}`);
+    if (!this.systems.includes(systemName)) {
+      console.warn(`CanvasResourcePool: unknown system ${systemName}`);
       return;
     }
 
@@ -158,96 +108,35 @@ export class CanvasResourcePool {
     }
 
     if (this.activeSystem) {
-      const currentContainer = this.containerElements.get(this.activeSystem);
-      if (currentContainer) {
-        currentContainer.style.display = 'none';
+      const previousContainer = this.containerElements.get(this.activeSystem);
+      if (previousContainer) {
+        previousContainer.style.display = 'none';
       }
-
-      const currentCanvases = this.canvases.get(this.activeSystem) || [];
-      currentCanvases.forEach((canvas) => {
-        const gl = this.contexts.get(canvas);
-        if (gl && !gl.isContextLost()) {
-          gl.finish();
-        }
-      });
     }
 
-    const targetContainer = this.containerElements.get(systemName);
-    if (targetContainer) {
-      targetContainer.style.display = 'block';
-      targetContainer.style.visibility = 'visible';
-      targetContainer.style.opacity = '1';
+    const nextContainer = this.containerElements.get(systemName);
+    if (nextContainer) {
+      nextContainer.style.display = 'block';
     }
-
-    const targetCanvases = this.canvases.get(systemName) || [];
-    targetCanvases.forEach((canvas) => {
-      const gl = this.contexts.get(canvas);
-      if (gl && gl.isContextLost()) {
-        this.recoverContext(canvas, systemName);
-      }
-    });
 
     this.activeSystem = systemName;
-  }
-
-  recoverContext(canvas, systemName) {
-    try {
-      const gl = canvas.getContext('webgl2', this.contextAttributes)
-        || canvas.getContext('webgl', this.contextAttributes);
-
-      if (gl) {
-        gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(0, 0, 0, 0);
-        this.contexts.set(canvas, gl);
-
-        if (this.resourceManager) {
-          const contextId = this.contextIds.get(canvas)
-            || this.getContextId(systemName, this.getCanvasLayerIndex(systemName, canvas));
-          if (contextId) {
-            this.resourceManager.registerWebGLContext(contextId, gl);
-            this.contextIds.set(canvas, contextId);
-          }
-        }
-
-        console.log(`CanvasResourcePool: Recovered WebGL context for ${systemName}`);
-      }
-    } catch (error) {
-      console.error(`CanvasResourcePool: Failed to recover context for ${systemName}`, error);
-    }
   }
 
   getCanvasResources(systemName, layerIndex = 0) {
     const canvases = this.canvases.get(systemName);
     if (!canvases || layerIndex >= canvases.length) {
-      console.error(`CanvasResourcePool: Invalid canvas request ${systemName}[${layerIndex}]`);
       return null;
     }
 
     const canvas = canvases[layerIndex];
-    const context = this.contexts.get(canvas);
+    const record = this.contextRecords.get(canvas);
+
     return {
       canvas,
-      context,
-      isValid: Boolean(context && !context.isContextLost()),
+      context: record?.context || null,
+      contextId: record?.contextId || null,
+      isValid: Boolean(record?.context && !record.context.isContextLost?.()),
     };
-  }
-
-  getCanvasSet(systemName) {
-    return this.canvases.get(systemName) || [];
-  }
-
-  setupResizeHandler() {
-    if (this.resizeListener) {
-      return;
-    }
-
-    let resizeTimeout = null;
-    this.resizeListener = () => {
-      clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(() => this.handleResize(), 100);
-    };
-
-    window.addEventListener('resize', this.resizeListener);
   }
 
   handleResize(width = window.innerWidth, height = window.innerHeight) {
@@ -257,46 +146,61 @@ export class CanvasResourcePool {
       systemCanvases.forEach((canvas) => {
         canvas.width = width * dpr;
         canvas.height = height * dpr;
-
-        const gl = this.contexts.get(canvas);
-        if (gl && !gl.isContextLost()) {
-          gl.viewport(0, 0, canvas.width, canvas.height);
+        const record = this.contextRecords.get(canvas);
+        if (record?.context) {
+          record.context.viewport(0, 0, canvas.width, canvas.height);
         }
       });
     });
   }
 
-  cleanup() {
-    if (this.resizeListener) {
-      window.removeEventListener('resize', this.resizeListener);
-      this.resizeListener = null;
+  attachResizeListener() {
+    if (this.resizeHandler) {
+      return;
     }
 
-    this.contexts.forEach((gl) => {
-      if (gl && !gl.isContextLost()) {
-        const loseContext = gl.getExtension('WEBGL_lose_context');
-        if (loseContext) {
-          loseContext.loseContext();
-        }
+    let debounce = null;
+    this.resizeHandler = () => {
+      window.clearTimeout(debounce);
+      debounce = window.setTimeout(() => this.handleResize(), 100);
+    };
+
+    window.addEventListener('resize', this.resizeHandler);
+  }
+
+  destroy() {
+    if (this.resizeHandler) {
+      window.removeEventListener('resize', this.resizeHandler);
+      this.resizeHandler = null;
+    }
+
+    this.contextRecords.forEach(({ contextId }) => {
+      if (contextId) {
+        this.resourceManager?.unregisterWebGLContext(contextId);
       }
     });
 
-    this.contexts.clear();
     this.canvases.clear();
+    this.contextRecords.clear();
     this.containerElements.clear();
-    this.contextIds.clear();
     this.activeSystem = null;
+  }
+
+  cleanup() {
+    this.destroy();
+  }
+
+  getCanvasId(systemName, layerName) {
+    return systemName === 'faceted'
+      ? `${layerName}-canvas`
+      : `${systemName}-${layerName}-canvas`;
   }
 
   getContextId(systemName, layerIndex) {
     return `${systemName}-layer-${layerIndex}`;
   }
-
-  getCanvasLayerIndex(systemName, canvas) {
-    const canvases = this.canvases.get(systemName) || [];
-    return canvases.indexOf(canvas);
-  }
 }
 
-// Backwards compatibility for existing imports
 export class CanvasManager extends CanvasResourcePool {}
+
+export default CanvasResourcePool;
