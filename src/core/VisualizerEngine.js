@@ -1,12 +1,12 @@
 /**
  * VisualizerEngine
  * ------------------------------------------------------------
- * High level facade that wires the canvas pool, engine coordinator,
- * state manager and existing visualisation systems together. The
- * implementation follows the recommendations captured in the recent
- * architectural analysis: initialise shared systems first, coordinate
- * transitions centrally and keep parameter updates in sync with the
- * global state container.
+ * High level facade that wires together the professional canvas pool,
+ * resource manager, engine coordinator and centralised state manager.
+ * The implementation adheres to the architectural guidance captured in
+ * COMPREHENSIVE_ARCHITECTURE_ANALYSIS.md and
+ * PROPER_ARCHITECTURE_SOLUTIONS.md: coordinated engine lifecycle,
+ * pooled canvases, shared GPU resources and state-driven transitions.
  */
 
 import { VIB34DIntegratedEngine as FacetedEngine } from './Engine.js';
@@ -38,7 +38,7 @@ export class VisualizerEngine {
     this.reactivityManager = null;
     this.hypercubeSystem = null;
     this.currentSystem = 'faceted';
-    this.currentParameters = {};
+    this.currentParameters = { ...this.stateManager.getVisualizationState().parameters };
     this.unsubscribe = null;
     this.stateSyncInProgress = false;
     this.initialised = false;
@@ -57,27 +57,31 @@ export class VisualizerEngine {
     this.registerEngines();
     await this.engineCoordinator.initialize();
 
-    await this.engineCoordinator.switchEngine('faceted');
-    this.currentSystem = 'faceted';
+    const restored = this.stateManager.restoreState();
+    const state = this.stateManager.getState();
+    this.currentParameters = { ...state.visualization.parameters };
+    const initialSystem = restored ? state.visualization.activeSystem : 'faceted';
+    await this.engineCoordinator.switchEngine(initialSystem);
+    this.currentSystem = initialSystem;
 
     this.stateManager.dispatch({ type: 'system/initialize' });
 
     this.reactivityManager = new ReactivityManager();
     this.reactivityManager.initialize(this.canvas);
-    this.reactivityManager.setActiveSystem('faceted', this.engineCoordinator.getEngine('faceted'));
+    this.reactivityManager.setActiveSystem(initialSystem, this.engineCoordinator.getEngine(initialSystem));
 
-    this.unsubscribe = this.stateManager.subscribe((state, prevState) => {
+    this.unsubscribe = this.stateManager.subscribe((nextState, prevState) => {
       if (this.stateSyncInProgress) {
         return;
       }
 
-      const desiredSystem = state.system.activeSystem;
+      const desiredSystem = nextState.visualization.activeSystem;
       if (desiredSystem && desiredSystem !== this.currentSystem) {
         this.switchToSystem(desiredSystem, { fromState: true });
       }
 
-      if (state.visualization?.parameters !== prevState?.visualization?.parameters) {
-        this.applyParameters(state.visualization?.parameters || {}, {
+      if (nextState.visualization.parameters !== prevState?.visualization?.parameters) {
+        this.applyParameters(nextState.visualization.parameters || {}, {
           replace: true,
           suppressDispatch: true,
         });
@@ -89,32 +93,46 @@ export class VisualizerEngine {
 
   registerEngines() {
     this.engineCoordinator.registerEngine('faceted', FacetedEngine, {
-      layers: ['background', 'content', 'effects'],
+      requiredLayers: ['background', 'shadow', 'content'],
+      initializationOrder: 1,
     });
-    this.engineCoordinator.registerEngine('quantum', QuantumEngine);
-    this.engineCoordinator.registerEngine('holographic', RealHolographicSystem);
-    this.engineCoordinator.registerEngine('polychora', PolychoraSystem);
+    this.engineCoordinator.registerEngine('quantum', QuantumEngine, {
+      requiredLayers: ['background', 'quantum', 'particles'],
+      initializationOrder: 2,
+    });
+    this.engineCoordinator.registerEngine('holographic', RealHolographicSystem, {
+      requiredLayers: ['hologram_base', 'interference', 'projection'],
+      initializationOrder: 3,
+    });
+    this.engineCoordinator.registerEngine('polychora', PolychoraSystem, {
+      requiredLayers: ['hyperspace', 'projection', 'tesseract'],
+      initializationOrder: 4,
+    });
   }
 
   async switchToSystem(systemName, { fromState = false } = {}) {
     if (systemName === 'hypercube') {
-    if (!this.hypercubeSystem) {
-      this.hypercubeSystem = new HypercubeGameSystem(this.canvas);
-      if (typeof this.hypercubeSystem.initialize === 'function') {
-        await this.hypercubeSystem.initialize();
-      } else if (typeof this.hypercubeSystem.initializeExplosiveSystem === 'function') {
-        this.hypercubeSystem.initializeExplosiveSystem();
+      if (!this.hypercubeSystem) {
+        this.hypercubeSystem = new HypercubeGameSystem(this.canvas);
+        if (typeof this.hypercubeSystem.initialize === 'function') {
+          await this.hypercubeSystem.initialize();
+        } else if (typeof this.hypercubeSystem.initializeExplosiveSystem === 'function') {
+          this.hypercubeSystem.initializeExplosiveSystem();
+        }
       }
-    }
 
       await this.engineCoordinator.switchEngine('faceted');
       this.canvasPool.switchToSystem('faceted');
       this.currentSystem = 'hypercube';
       this.reactivityManager?.setActiveSystem('hypercube', this.hypercubeSystem);
-      this.applyParameters(this.currentParameters, { targetSystem: 'hypercube', replace: true, suppressDispatch: true });
+      this.applyParameters(this.currentParameters, {
+        targetSystem: 'hypercube',
+        replace: true,
+        suppressDispatch: true,
+      });
 
       if (!fromState) {
-        this.stateManager.dispatch({ type: 'system/switch', payload: 'hypercube' });
+        this.stateManager.dispatch({ type: 'visualization/switchSystem', payload: 'hypercube' });
       }
       return true;
     }
@@ -132,10 +150,14 @@ export class VisualizerEngine {
     this.currentSystem = systemName;
     const engine = this.engineCoordinator.getEngine(systemName);
     this.reactivityManager?.setActiveSystem(systemName, engine);
-    this.applyParameters(this.currentParameters, { targetSystem: systemName, replace: true, suppressDispatch: true });
+    this.applyParameters(this.currentParameters, {
+      targetSystem: systemName,
+      replace: true,
+      suppressDispatch: true,
+    });
 
     if (!fromState) {
-      this.stateManager.dispatch({ type: 'system/switch', payload: systemName });
+      this.stateManager.dispatch({ type: 'visualization/switchSystem', payload: systemName });
     }
 
     return true;
