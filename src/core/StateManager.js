@@ -17,7 +17,7 @@ const PERF = typeof performance !== 'undefined'
 const hasLocalStorage = typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 
 export class StateManager {
-  constructor() {
+  constructor(options = {}) {
     this.state = this.getInitialState();
     this.reducers = new Map();
     this.middleware = [];
@@ -25,6 +25,30 @@ export class StateManager {
     this.stateHistory = [];
     this.maxHistorySize = 50;
     this.persistenceTimeout = null;
+    const performanceOptions = options.performanceOptions || options.performance || {};
+    const {
+      enablePerformanceLogging = true,
+      slowReducerThresholdMs = 5,
+      maxPerformanceSamples = 120,
+      onSlowReducer = null,
+      onPerformanceSample = null,
+      logger = null,
+    } = performanceOptions;
+
+    this.performanceOptions = {
+      enablePerformanceLogging: Boolean(enablePerformanceLogging),
+      slowReducerThresholdMs: typeof slowReducerThresholdMs === 'number'
+        ? Math.max(0, slowReducerThresholdMs)
+        : 5,
+      maxPerformanceSamples: typeof maxPerformanceSamples === 'number' && maxPerformanceSamples > 0
+        ? Math.ceil(maxPerformanceSamples)
+        : 120,
+      onSlowReducer: typeof onSlowReducer === 'function' ? onSlowReducer : null,
+      onPerformanceSample: typeof onPerformanceSample === 'function' ? onPerformanceSample : null,
+      logger: typeof logger === 'function' ? logger : null,
+    };
+
+    this.performanceSamples = [];
 
     this.initializeReducers();
     this.initializeMiddleware();
@@ -161,10 +185,21 @@ export class StateManager {
   applyReducers(state, action) {
     let hasChanged = false;
     const nextState = { ...state };
+    const shouldMeasure = this.shouldMeasurePerformance();
 
     this.reducers.forEach((reducer, domain) => {
       const previousSlice = state[domain];
-      const nextSlice = reducer(previousSlice, action);
+      let nextSlice;
+
+      if (shouldMeasure) {
+        const start = PERF.now();
+        nextSlice = reducer(previousSlice, action);
+        const duration = PERF.now() - start;
+        this.handleReducerPerformance(domain, action.type, duration);
+      } else {
+        nextSlice = reducer(previousSlice, action);
+      }
+
       if (nextSlice !== previousSlice) {
         nextState[domain] = nextSlice;
         hasChanged = true;
@@ -317,13 +352,6 @@ export class StateManager {
   }
 
   performanceMiddleware(prevState, action) {
-    const start = PERF.now();
-    setTimeout(() => {
-      const duration = PERF.now() - start;
-      if (duration > 5) {
-        console.log(`StateManager: slow reducer for ${action.type} (${duration.toFixed(2)}ms)`);
-      }
-    }, 0);
     return action;
   }
 
@@ -395,6 +423,75 @@ export class StateManager {
   getPerformanceScore() {
     const perf = this.state.visualization.performance;
     return Math.max(0, 100 - Math.max(0, perf.frameTime - 16.67) * 2);
+  }
+
+  shouldMeasurePerformance() {
+    const options = this.performanceOptions;
+    if (!options) {
+      return false;
+    }
+
+    return (
+      options.enablePerformanceLogging ||
+      typeof options.onPerformanceSample === 'function' ||
+      typeof options.onSlowReducer === 'function'
+    );
+  }
+
+  handleReducerPerformance(domain, actionType, duration) {
+    const options = this.performanceOptions;
+    if (!options) {
+      return;
+    }
+
+    const sample = {
+      domain,
+      actionType,
+      duration,
+      timestamp: Date.now(),
+    };
+
+    if (duration >= options.slowReducerThresholdMs) {
+      if (options.enablePerformanceLogging) {
+        const message = `StateManager: slow reducer for ${domain} (${actionType}) (${duration.toFixed(2)}ms)`;
+        if (options.logger) {
+          options.logger(message, sample);
+        } else {
+          console.warn?.(message);
+        }
+      }
+
+      if (options.onSlowReducer) {
+        options.onSlowReducer(sample);
+      }
+    }
+
+    this.recordPerformanceSample(sample);
+  }
+
+  recordPerformanceSample(sample) {
+    const options = this.performanceOptions;
+    if (!options) {
+      return;
+    }
+
+    this.performanceSamples.push(sample);
+    const overflow = this.performanceSamples.length - options.maxPerformanceSamples;
+    if (overflow > 0) {
+      this.performanceSamples.splice(0, overflow);
+    }
+
+    if (options.onPerformanceSample) {
+      options.onPerformanceSample(sample);
+    }
+  }
+
+  getPerformanceSamples() {
+    return [...this.performanceSamples];
+  }
+
+  clearPerformanceSamples() {
+    this.performanceSamples.length = 0;
   }
 
   schedulePersistence() {

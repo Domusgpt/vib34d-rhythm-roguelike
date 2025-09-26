@@ -232,6 +232,56 @@ test('StateManager persists and restores critical state', async () => {
   assert(restoreTarget.getSystemState().performanceLevel === 'medium', 'Restored performance level should match persisted value');
 });
 
+test('StateManager performance instrumentation is synchronous and bounded', () => {
+  const sampleEvents = [];
+  const slowEvents = [];
+  const manager = new StateManager({
+    performance: {
+      enablePerformanceLogging: false,
+      slowReducerThresholdMs: 0,
+      maxPerformanceSamples: 10,
+      onPerformanceSample: (sample) => sampleEvents.push(sample),
+      onSlowReducer: (sample) => slowEvents.push(sample),
+    },
+  });
+
+  manager.registerReducer(
+    'test',
+    (state = 0, action) => {
+      if (action.type === 'test/increment') {
+        return state + 1;
+      }
+      return state;
+    },
+    0,
+  );
+
+  manager.dispatch({ type: 'test/increment' });
+
+  assert(
+    sampleEvents.some((sample) => sample.domain === 'test'),
+    'Performance samples should be recorded synchronously for the registered reducer',
+  );
+  assert(
+    slowEvents.some((sample) => sample.domain === 'test'),
+    'Slow reducer callback should trigger when the configured threshold is met',
+  );
+
+  manager.dispatch({ type: 'test/increment' });
+  manager.dispatch({ type: 'test/increment' });
+  manager.dispatch({ type: 'test/increment' });
+
+  const storedSamples = manager.getPerformanceSamples();
+  assert(
+    storedSamples.length <= 10,
+    'StateManager should retain no more than the configured number of performance samples',
+  );
+  assert(
+    storedSamples.every((sample) => typeof sample.duration === 'number' && sample.duration >= 0),
+    'Recorded performance samples should include reducer durations',
+  );
+});
+
 test('EngineCoordinator orchestrates engine lifecycle', async () => {
   const canvasPool = new StubCanvasPool();
   const resourceManager = new StubResourceManager();
