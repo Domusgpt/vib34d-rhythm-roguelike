@@ -4,11 +4,12 @@
  */
 
 import { VIB34DIntegratedEngine as FacetedEngine } from './Engine.js';
-import { QuantumHolographicVisualizer as QuantumEngine } from '../quantum/QuantumVisualizer.js';
-import { HolographicVisualizer as HolographicEngine } from '../holograms/HolographicVisualizer.js';
+import { QuantumEngine } from '../quantum/QuantumEngine.js';
+import { RealHolographicSystem } from '../holograms/RealHolographicSystem.js';
 import { PolychoraSystem } from './PolychoraSystem.js';
 import { HypercubeGameSystem } from '../visualizers/HypercubeGameSystem.js';
-import { CanvasManager } from './CanvasManager.js';
+import { CanvasResourcePool } from './CanvasManager.js';
+import { EngineCoordinator } from './EngineCoordinator.js';
 import { ReactivityManager } from './ReactivityManager.js';
 
 export class VisualizerEngine {
@@ -28,7 +29,8 @@ export class VisualizerEngine {
         this.currentSystem = 'faceted';
         this.currentParameters = {};
 
-        this.canvasManager = new CanvasManager();
+        this.canvasManager = new CanvasResourcePool();
+        this.engineCoordinator = new EngineCoordinator(this.canvasManager);
         this.reactivityManager = null;
 
         // System switching state
@@ -44,12 +46,26 @@ export class VisualizerEngine {
                 throw new Error('WebGL not supported');
             }
 
-            // Initialize canvas manager
-            this.canvasManager.initialize(this.canvas);
+            // Initialize canvas pool (pre-allocates all visualization layers)
+            this.canvasManager.initialize();
 
             // Initialize reactivity manager
             this.reactivityManager = new ReactivityManager();
             this.reactivityManager.initialize(this.canvas);
+
+            // Prepare visualization engines through the coordinator
+            await this.engineCoordinator.initializeEngines({
+                faceted: FacetedEngine,
+                quantum: QuantumEngine,
+                holographic: RealHolographicSystem,
+                polychora: PolychoraSystem,
+            });
+
+            // Cache engine references for compatibility with legacy helpers
+            this.systems.faceted = this.engineCoordinator.getEngine('faceted');
+            this.systems.quantum = this.engineCoordinator.getEngine('quantum');
+            this.systems.holographic = this.engineCoordinator.getEngine('holographic');
+            this.systems.polychora = this.engineCoordinator.getEngine('polychora');
 
             // Initialize with faceted system by default
             await this.switchToSystem('faceted');
@@ -64,93 +80,50 @@ export class VisualizerEngine {
     }
 
     async switchToSystem(systemName) {
-        if (!['faceted', 'quantum', 'holographic', 'polychora', 'hypercube'].includes(systemName)) {
+        if (systemName === 'hypercube') {
+            if (!this.systems.hypercube) {
+                this.systems.hypercube = new HypercubeGameSystem(this.canvas);
+            }
+
+            this.currentSystem = 'hypercube';
+            this.systemReady = true;
+
+            if (this.reactivityManager) {
+                this.reactivityManager.setActiveSystem(systemName, this.systems.hypercube);
+            }
+
+            if (Object.keys(this.currentParameters).length > 0) {
+                this.applyParametersToSystem(this.systems.hypercube, this.currentParameters);
+            }
+
+            console.log('Switched to hypercube system');
+            return true;
+        }
+
+        if (!['faceted', 'quantum', 'holographic', 'polychora'].includes(systemName)) {
             console.warn('Unknown system:', systemName);
             return false;
         }
 
-        try {
-            // Clean up current system
-            if (this.systems[this.currentSystem]) {
-                this.cleanupCurrentSystem();
-            }
-
-            // Initialize new system
-            this.currentSystem = systemName;
-            await this.initializeSystem(systemName);
-
-            // Apply current parameters to new system
-            if (Object.keys(this.currentParameters).length > 0) {
-                this.setParameters(this.currentParameters);
-            }
-
-            this.systemReady = true;
-            console.log(`Switched to ${systemName} system`);
-            return true;
-
-        } catch (error) {
-            console.error(`Failed to switch to ${systemName} system:`, error);
+        const switched = await this.engineCoordinator.switchEngine(systemName);
+        if (!switched) {
             return false;
         }
-    }
 
-    async initializeSystem(systemName) {
-        const canvas = this.canvas;
-        const gl = this.gl;
+        this.currentSystem = systemName;
+        this.systems[systemName] = this.engineCoordinator.getEngine(systemName);
+        this.systemReady = true;
 
-        try {
-            switch (systemName) {
-                case 'faceted':
-                    this.systems.faceted = new FacetedEngine();
-                    if (typeof this.systems.faceted.initialize === 'function') {
-                        await this.systems.faceted.initialize(canvas);
-                    }
-                    break;
-
-                case 'quantum':
-                    // Pass canvas ID to quantum visualizer
-                    this.systems.quantum = new QuantumEngine(canvas.id || 'game-canvas', 'content', 1.0, 0);
-                    if (typeof this.systems.quantum.initialize === 'function') {
-                        await this.systems.quantum.initialize(canvas);
-                    }
-                    break;
-
-                case 'holographic':
-                    // Pass canvas ID to holographic visualizer
-                    this.systems.holographic = new HolographicEngine(canvas.id || 'game-canvas', 'content', 1.0, 0);
-                    if (typeof this.systems.holographic.initialize === 'function') {
-                        await this.systems.holographic.initialize(canvas);
-                    }
-                    break;
-
-                case 'polychora':
-                    this.systems.polychora = new PolychoraSystem();
-                    if (typeof this.systems.polychora.initialize === 'function') {
-                        await this.systems.polychora.initialize(canvas);
-                    }
-                    break;
-
-                case 'hypercube':
-                    this.systems.hypercube = new HypercubeGameSystem(canvas);
-                    this.systems.hypercube.startExplosion(); // ACTIVATE BOMBASTIC MODE!
-                    console.log('🔥💥 HYPERCUBE GAME SYSTEM ACTIVATED - PREPARE FOR EXPLOSIVE VISUALS! 💥🔥');
-                    break;
-            }
-        } catch (error) {
-            console.warn(`Failed to initialize ${systemName} system, using fallback:`, error);
-            // Create a minimal fallback system
-            this.systems[systemName] = {
-                render: () => {
-                    // Simple fallback rendering
-                    if (this.gl) {
-                        this.gl.clearColor(0.0, 0.0, 0.2, 1.0);
-                        this.gl.clear(this.gl.COLOR_BUFFER_BIT);
-                    }
-                },
-                setParameters: () => {},
-                cleanup: () => {}
-            };
+        if (this.reactivityManager) {
+            this.reactivityManager.setActiveSystem(systemName, this.systems[systemName]);
         }
+
+        if (Object.keys(this.currentParameters).length > 0) {
+            this.engineCoordinator.applyParameters(this.currentParameters, systemName);
+        }
+
+        console.log(`Switched to ${systemName} system via EngineCoordinator`);
+        return true;
     }
 
     cleanupCurrentSystem() {
@@ -170,11 +143,15 @@ export class VisualizerEngine {
 
         if (!this.systemReady) return;
 
-        const system = this.systems[this.currentSystem];
-        if (system) {
-            // Map generic parameters to system-specific methods
-            this.applyParametersToSystem(system, parameters);
+        if (this.currentSystem === 'hypercube') {
+            const hypercubeSystem = this.systems.hypercube;
+            if (hypercubeSystem) {
+                this.applyParametersToSystem(hypercubeSystem, parameters);
+            }
+            return;
         }
+
+        this.engineCoordinator.applyParameters(parameters);
     }
 
     applyParametersToSystem(system, params) {
@@ -219,9 +196,13 @@ export class VisualizerEngine {
     render(timestamp = 0, gameState = {}) {
         if (!this.systemReady || !this.gl) return;
 
-        const system = this.systems[this.currentSystem];
-        if (system && typeof system.render === 'function') {
-            system.render(timestamp, gameState);
+        if (this.currentSystem === 'hypercube') {
+            const hypercube = this.systems.hypercube;
+            if (hypercube && typeof hypercube.render === 'function') {
+                hypercube.render(timestamp, gameState);
+            }
+        } else {
+            this.engineCoordinator.render(timestamp, gameState);
         }
 
         // 🎮🔍 UPDATE HYPERCUBE GAME STATE VISUALS FOR TACTICAL INFO 🔍🎮
@@ -508,9 +489,13 @@ export class VisualizerEngine {
         }
 
         // Notify current system of resize
-        const system = this.systems[this.currentSystem];
-        if (system && typeof system.handleResize === 'function') {
-            system.handleResize(width, height);
+        if (this.currentSystem === 'hypercube') {
+            const hypercube = this.systems.hypercube;
+            if (hypercube && typeof hypercube.handleResize === 'function') {
+                hypercube.handleResize(width, height);
+            }
+        } else {
+            this.engineCoordinator.handleResize(width, height);
         }
 
         if (this.canvasManager) {
