@@ -13,6 +13,7 @@ export class CanvasResourcePool {
     this.canvases = new Map(); // system -> [canvas]
     this.contexts = new Map(); // canvas -> WebGL context
     this.containerElements = new Map(); // system -> container element
+    this.contextIds = new Map(); // canvas -> contextId
     this.activeSystem = null;
 
     this.maxLayersPerSystem = options.maxLayersPerSystem || LAYER_NAMES.length;
@@ -24,6 +25,7 @@ export class CanvasResourcePool {
       ...options.contextAttributes,
     };
 
+    this.resourceManager = options.resourceManager || null;
     this.resizeListener = null;
   }
 
@@ -128,6 +130,12 @@ export class CanvasResourcePool {
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.clearColor(0, 0, 0, 0);
         this.contexts.set(canvas, gl);
+
+        if (this.resourceManager) {
+          const contextId = this.getContextId(systemName, layerIndex);
+          this.contextIds.set(canvas, contextId);
+          this.resourceManager.registerWebGLContext(contextId, gl);
+        }
       } else {
         console.warn(`CanvasResourcePool: Unable to create WebGL context for ${systemName} layer ${layerIndex}`);
       }
@@ -191,6 +199,16 @@ export class CanvasResourcePool {
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.clearColor(0, 0, 0, 0);
         this.contexts.set(canvas, gl);
+
+        if (this.resourceManager) {
+          const contextId = this.contextIds.get(canvas)
+            || this.getContextId(systemName, this.getCanvasLayerIndex(systemName, canvas));
+          if (contextId) {
+            this.resourceManager.registerWebGLContext(contextId, gl);
+            this.contextIds.set(canvas, contextId);
+          }
+        }
+
         console.log(`CanvasResourcePool: Recovered WebGL context for ${systemName}`);
       }
     } catch (error) {
@@ -266,7 +284,17 @@ export class CanvasResourcePool {
     this.contexts.clear();
     this.canvases.clear();
     this.containerElements.clear();
+    this.contextIds.clear();
     this.activeSystem = null;
+  }
+
+  getContextId(systemName, layerIndex) {
+    return `${systemName}-layer-${layerIndex}`;
+  }
+
+  getCanvasLayerIndex(systemName, canvas) {
+    const canvases = this.canvases.get(systemName) || [];
+    return canvases.indexOf(canvas);
   }
 }
 

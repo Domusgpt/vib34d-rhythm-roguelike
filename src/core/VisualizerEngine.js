@@ -11,6 +11,8 @@ import { HypercubeGameSystem } from '../visualizers/HypercubeGameSystem.js';
 import { CanvasResourcePool } from './CanvasManager.js';
 import { EngineCoordinator } from './EngineCoordinator.js';
 import { ReactivityManager } from './ReactivityManager.js';
+import { ResourceManager } from './ResourceManager.js';
+import { StateManager } from './StateManager.js';
 
 export class VisualizerEngine {
     constructor(canvas) {
@@ -29,11 +31,24 @@ export class VisualizerEngine {
         this.currentSystem = 'faceted';
         this.currentParameters = {};
 
-        this.canvasManager = new CanvasResourcePool();
-        this.engineCoordinator = new EngineCoordinator(this.canvasManager);
+        this.resourceManager = new ResourceManager();
+        this.stateManager = new StateManager();
+        this.stateUnsubscribe = null;
+        this.stateSyncInProgress = false;
+        this.stateReady = false;
+        this.performanceSample = {
+            lastSampleTime: 0,
+            frameCount: 0,
+            totalRenderTime: 0
+        };
+
+        this.canvasManager = new CanvasResourcePool({ resourceManager: this.resourceManager });
+        this.engineCoordinator = new EngineCoordinator(this.canvasManager, {
+            resourceManager: this.resourceManager,
+            stateManager: this.stateManager
+        });
         this.reactivityManager = null;
 
-        // System switching state
         this.isInitialized = false;
         this.systemReady = false;
     }
@@ -46,8 +61,17 @@ export class VisualizerEngine {
                 throw new Error('WebGL not supported');
             }
 
+            this.setupStateManagement();
+
             // Initialize canvas pool (pre-allocates all visualization layers)
             this.canvasManager.initialize();
+
+            this.stateSyncInProgress = true;
+            this.stateManager.dispatch({
+                type: 'system/updateSupport',
+                payload: { webglSupport: true }
+            });
+            this.stateSyncInProgress = false;
 
             // Initialize reactivity manager
             this.reactivityManager = new ReactivityManager();
@@ -68,7 +92,14 @@ export class VisualizerEngine {
             this.systems.polychora = this.engineCoordinator.getEngine('polychora');
 
             // Initialize with faceted system by default
-            await this.switchToSystem('faceted');
+            await this.switchToSystem('faceted', { stateDriven: true });
+
+            this.stateReady = true;
+            this.stateSyncInProgress = true;
+            this.stateManager.dispatch({ type: 'system/initialize' });
+            this.stateSyncInProgress = false;
+
+            this.stateManager.restoreState();
 
             this.isInitialized = true;
             console.log('VisualizerEngine initialized successfully');
@@ -79,7 +110,29 @@ export class VisualizerEngine {
         }
     }
 
-    async switchToSystem(systemName) {
+    setupStateManagement() {
+        if (this.stateUnsubscribe) {
+            return;
+        }
+
+        this.stateUnsubscribe = this.stateManager.subscribe((newState, prevState) => {
+            if (!this.stateReady) {
+                return;
+            }
+
+            if (!this.stateSyncInProgress && newState.visualization.activeSystem !== prevState.visualization.activeSystem) {
+                this.switchToSystem(newState.visualization.activeSystem, { stateDriven: true });
+            }
+
+            if (!this.stateSyncInProgress && newState.visualization.parameters !== prevState.visualization.parameters) {
+                this.updateParameters(newState.visualization.parameters, { skipState: true, replace: true });
+            }
+        });
+    }
+
+    async switchToSystem(systemName, options = {}) {
+        const { stateDriven = false } = options;
+
         if (systemName === 'hypercube') {
             if (!this.systems.hypercube) {
                 this.systems.hypercube = new HypercubeGameSystem(this.canvas);
@@ -94,6 +147,15 @@ export class VisualizerEngine {
 
             if (Object.keys(this.currentParameters).length > 0) {
                 this.applyParametersToSystem(this.systems.hypercube, this.currentParameters);
+            }
+
+            if (!stateDriven && this.stateManager) {
+                this.stateSyncInProgress = true;
+                this.stateManager.dispatch({
+                    type: 'visualization/switchSystem',
+                    payload: systemName
+                });
+                this.stateSyncInProgress = false;
             }
 
             console.log('Switched to hypercube system');
@@ -122,6 +184,15 @@ export class VisualizerEngine {
             this.engineCoordinator.applyParameters(this.currentParameters, systemName);
         }
 
+        if (!stateDriven && this.stateManager) {
+            this.stateSyncInProgress = true;
+            this.stateManager.dispatch({
+                type: 'visualization/switchSystem',
+                payload: systemName
+            });
+            this.stateSyncInProgress = false;
+        }
+
         console.log(`Switched to ${systemName} system via EngineCoordinator`);
         return true;
     }
@@ -139,19 +210,35 @@ export class VisualizerEngine {
     }
 
     setParameters(parameters) {
-        this.currentParameters = { ...parameters };
+        this.updateParameters(parameters, { replace: true });
+    }
 
-        if (!this.systemReady) return;
+    updateParameters(parameters, options = {}) {
+        const { skipState = false, replace = false } = options;
 
-        if (this.currentSystem === 'hypercube') {
-            const hypercubeSystem = this.systems.hypercube;
-            if (hypercubeSystem) {
-                this.applyParametersToSystem(hypercubeSystem, parameters);
+        this.currentParameters = replace
+            ? { ...parameters }
+            : { ...this.currentParameters, ...parameters };
+
+        if (this.systemReady) {
+            if (this.currentSystem === 'hypercube') {
+                const hypercubeSystem = this.systems.hypercube;
+                if (hypercubeSystem) {
+                    this.applyParametersToSystem(hypercubeSystem, this.currentParameters);
+                }
+            } else {
+                this.engineCoordinator.applyParameters(this.currentParameters);
             }
-            return;
         }
 
-        this.engineCoordinator.applyParameters(parameters);
+        if (!skipState && this.stateManager) {
+            this.stateSyncInProgress = true;
+            this.stateManager.dispatch({
+                type: 'visualization/updateParameters',
+                payload: this.currentParameters
+            });
+            this.stateSyncInProgress = false;
+        }
     }
 
     applyParametersToSystem(system, params) {
@@ -196,6 +283,10 @@ export class VisualizerEngine {
     render(timestamp = 0, gameState = {}) {
         if (!this.systemReady || !this.gl) return;
 
+        const frameStart = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+            ? performance.now()
+            : Date.now();
+
         if (this.currentSystem === 'hypercube') {
             const hypercube = this.systems.hypercube;
             if (hypercube && typeof hypercube.render === 'function') {
@@ -212,6 +303,53 @@ export class VisualizerEngine {
 
         // 🔥⚡ AMPLIFY CROSS-SYSTEM CONTRASTS FOR MAXIMUM EXCITEMENT ⚡🔥
         this.amplifySystemContrasts(gameState);
+
+        const frameEnd = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+            ? performance.now()
+            : Date.now();
+
+        this.trackPerformance(frameEnd - frameStart);
+    }
+
+    trackPerformance(renderDuration) {
+        if (!this.stateManager) {
+            return;
+        }
+
+        const now = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+            ? performance.now()
+            : Date.now();
+
+        if (!this.performanceSample.lastSampleTime) {
+            this.performanceSample.lastSampleTime = now;
+        }
+
+        this.performanceSample.frameCount += 1;
+        this.performanceSample.totalRenderTime += renderDuration;
+
+        const elapsed = now - this.performanceSample.lastSampleTime;
+        if (elapsed < 500) {
+            return;
+        }
+
+        const averageFrameTime = elapsed / Math.max(1, this.performanceSample.frameCount);
+        const averageRenderTime = this.performanceSample.totalRenderTime / Math.max(1, this.performanceSample.frameCount);
+        const fps = averageFrameTime > 0 ? 1000 / averageFrameTime : 0;
+
+        this.stateSyncInProgress = true;
+        this.stateManager.dispatch({
+            type: 'visualization/updatePerformance',
+            payload: {
+                fps: Math.round(fps * 10) / 10,
+                frameTime: averageFrameTime,
+                renderTime: averageRenderTime
+            }
+        });
+        this.stateSyncInProgress = false;
+
+        this.performanceSample.lastSampleTime = now;
+        this.performanceSample.frameCount = 0;
+        this.performanceSample.totalRenderTime = 0;
     }
 
     // 💫🔍 TACTICAL INFORMATION OVERLAY FOR CROSS-SYSTEM COMMUNICATION 🔍💫
@@ -522,12 +660,41 @@ export class VisualizerEngine {
         if (system && typeof system.onAudioData === 'function') {
             system.onAudioData(audioData);
         }
+
+        if (this.stateManager && audioData) {
+            const reactivePayload = {};
+            if (typeof audioData.bass === 'number') reactivePayload.bass = audioData.bass;
+            if (typeof audioData.mid === 'number') reactivePayload.mid = audioData.mid;
+            if (typeof audioData.high === 'number') reactivePayload.high = audioData.high;
+            if (typeof audioData.energy === 'number') reactivePayload.energy = audioData.energy;
+
+            if (Object.keys(reactivePayload).length > 0) {
+                this.stateSyncInProgress = true;
+                this.stateManager.dispatch({
+                    type: 'audio/updateReactive',
+                    payload: reactivePayload
+                });
+                this.stateSyncInProgress = false;
+            }
+        }
     }
 
     onBeat(beatData) {
         const system = this.systems[this.currentSystem];
         if (system && typeof system.onBeat === 'function') {
             system.onBeat(beatData);
+        }
+
+        if (this.stateManager && beatData) {
+            this.stateSyncInProgress = true;
+            this.stateManager.dispatch({
+                type: 'audio/addBeat',
+                payload: {
+                    ...beatData,
+                    timestamp: Date.now()
+                }
+            });
+            this.stateSyncInProgress = false;
         }
     }
 
@@ -842,8 +1009,28 @@ export class VisualizerEngine {
             this.reactivityManager.cleanup();
         }
 
+        if (this.engineCoordinator) {
+            this.engineCoordinator.destroy();
+        }
+
         if (this.canvasManager) {
             this.canvasManager.cleanup();
         }
+
+        if (this.stateUnsubscribe) {
+            this.stateUnsubscribe();
+            this.stateUnsubscribe = null;
+        }
+
+        if (this.stateManager) {
+            this.stateManager.destroy();
+        }
+
+        if (this.resourceManager) {
+            this.resourceManager.destroy();
+        }
+
+        this.stateReady = false;
+        this.systemReady = false;
     }
 }
