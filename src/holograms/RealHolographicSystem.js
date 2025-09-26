@@ -6,7 +6,22 @@
 import { HolographicVisualizer } from './HolographicVisualizer.js';
 
 export class RealHolographicSystem {
-    constructor() {
+    constructor(options = {}) {
+        const {
+            canvasResources = {},
+            sharedResources = null,
+            resourceManager = null,
+            systemName = 'holographic',
+            config = {},
+        } = options || {};
+
+        this.canvasResources = canvasResources;
+        this.sharedResources = sharedResources;
+        this.resourceManager = resourceManager;
+        this.systemName = systemName;
+        this.config = config;
+        this.useExternalRenderLoop = Boolean(canvasResources && Object.keys(canvasResources).length);
+
         this.visualizers = [];
         this.currentVariant = 0;
         this.baseVariants = 30; // Original 30 variations
@@ -45,13 +60,15 @@ export class RealHolographicSystem {
         
         this.initialize();
     }
-    
+
     initialize() {
         console.log('🎨 Initializing REAL Holographic System for Active Holograms tab...');
         this.createVisualizers();
         this.setupCenterDistanceReactivity(); // NEW: Center-distance grid density changes
         this.updateVariantDisplay();
-        this.startRenderLoop();
+        if (!this.useExternalRenderLoop) {
+            this.startRenderLoop();
+        }
     }
     
     createVisualizers() {
@@ -98,7 +115,7 @@ export class RealHolographicSystem {
     
     setActive(active) {
         this.isActive = active;
-        
+
         if (active) {
             // Show holographic layers (from clean interface)
             const holoLayers = document.getElementById('holographicLayers');
@@ -119,6 +136,32 @@ export class RealHolographicSystem {
             }
             console.log('🌌 REAL Active Holograms DEACTIVATED');
         }
+    }
+
+    render() {
+        if (!this.isActive) {
+            return;
+        }
+
+        this.updateVisualizers();
+    }
+
+    updateVisualizers() {
+        this.visualizers.forEach((visualizer) => {
+            if (visualizer.render) {
+                visualizer.render();
+            }
+        });
+    }
+
+    handleResize(width, height) {
+        this.visualizers.forEach((visualizer) => {
+            if (typeof visualizer.handleResize === 'function') {
+                visualizer.handleResize(width, height);
+            } else if (typeof visualizer.resize === 'function') {
+                visualizer.resize(width, height);
+            }
+        });
     }
     
     
@@ -688,13 +731,11 @@ export class RealHolographicSystem {
             if (this.isActive) {
                 // Update audio reactivity
                 this.updateAudio();
-                
+
                 // Render all visualizers
-                this.visualizers.forEach(visualizer => {
-                    visualizer.render();
-                });
+                this.updateVisualizers();
             }
-            
+
             requestAnimationFrame(render);
         };
         

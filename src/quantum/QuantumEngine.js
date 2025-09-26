@@ -8,7 +8,22 @@ import { ParameterManager } from '../core/Parameters.js';
 import { GeometryLibrary } from '../geometry/GeometryLibrary.js';
 
 export class QuantumEngine {
-    constructor() {
+    constructor(options = {}) {
+        const {
+            canvasResources = {},
+            sharedResources = null,
+            resourceManager = null,
+            systemName = 'quantum',
+            config = {},
+        } = options || {};
+
+        this.canvasResources = canvasResources;
+        this.sharedResources = sharedResources || {};
+        this.resourceManager = resourceManager;
+        this.systemName = systemName;
+        this.config = config;
+        this.useExternalRenderLoop = Boolean(canvasResources && Object.keys(canvasResources).length);
+
         console.log('🔮 Initializing VIB34D Quantum Engine...');
         
         this.visualizers = [];
@@ -45,7 +60,9 @@ export class QuantumEngine {
         this.createVisualizers();
         this.setupAudioReactivity();
         this.setupGestureVelocityReactivity(); // Additional gesture system
-        this.startRenderLoop();
+        if (!this.useExternalRenderLoop) {
+            this.startRenderLoop();
+        }
         console.log('✨ Quantum Engine initialized with audio + gesture velocity reactivity');
     }
     
@@ -63,14 +80,23 @@ export class QuantumEngine {
         
         layers.forEach(layer => {
             try {
-                // Canvas elements should already exist in HTML
-                const canvas = document.getElementById(layer.id);
-                if (!canvas) {
-                    console.warn(`⚠️ Canvas ${layer.id} not found in DOM - skipping`);
+                const resource = this.resolveLayerResource(layer.role, layer.id);
+                if (!resource?.canvas) {
+                    console.warn(`⚠️ Quantum layer ${layer.role} has no pooled canvas - skipping`);
                     return;
                 }
-                
-                const visualizer = new QuantumHolographicVisualizer(layer.id, layer.role, layer.reactivity, 0);
+
+                const visualizer = new QuantumHolographicVisualizer(
+                    resource.canvas,
+                    layer.role,
+                    layer.reactivity,
+                    0,
+                    {
+                        canvas: resource.canvas,
+                        context: resource.context,
+                        sharedResources: this.sharedResources,
+                    }
+                );
                 if (visualizer.gl) {
                     this.visualizers.push(visualizer);
                     console.log(`🌌 Created quantum layer: ${layer.role}`);
@@ -84,13 +110,26 @@ export class QuantumEngine {
         
         console.log(`✅ Created ${this.visualizers.length} quantum visualizers with enhanced effects`);
     }
+
+    resolveLayerResource(layerKey, fallbackId) {
+        if (this.canvasResources && this.canvasResources[layerKey]) {
+            return this.canvasResources[layerKey];
+        }
+
+        const fallbackCanvas = fallbackId ? document.getElementById(fallbackId) : null;
+        if (!fallbackCanvas) {
+            return null;
+        }
+
+        return { canvas: fallbackCanvas, context: fallbackCanvas.getContext('webgl2') || fallbackCanvas.getContext('webgl') };
+    }
     
     /**
      * Set system active/inactive
      */
     setActive(active) {
         this.isActive = active;
-        
+
         if (active) {
             // Show quantum layers
             const quantumLayers = document.getElementById('quantumLayers');
@@ -112,6 +151,36 @@ export class QuantumEngine {
             }
             console.log('🔮 Quantum System DEACTIVATED');
         }
+    }
+
+    render() {
+        if (!this.isActive) {
+            return;
+        }
+
+        this.updateVisualizers();
+    }
+
+    updateVisualizers() {
+        const params = this.parameters.getAllParameters();
+        this.visualizers.forEach((visualizer) => {
+            if (visualizer.updateParameters) {
+                visualizer.updateParameters(params);
+            }
+            if (visualizer.render) {
+                visualizer.render();
+            }
+        });
+    }
+
+    handleResize(width, height) {
+        this.visualizers.forEach((visualizer) => {
+            if (typeof visualizer.handleResize === 'function') {
+                visualizer.handleResize(width, height);
+            } else if (typeof visualizer.resize === 'function') {
+                visualizer.resize(width, height);
+            }
+        });
     }
     
     // Method to be called when global audio is toggled
@@ -499,17 +568,9 @@ export class QuantumEngine {
                 // MVEP-STYLE AUDIO PROCESSING: Use global audio data instead of internal processing
                 // This eliminates conflicts with holographic system and ensures consistent audio reactivity
                 // Audio reactivity now handled directly in visualizer render loops
-                
-                // CRITICAL FIX: Update visualizer parameters before rendering
-                const currentParams = this.parameters.getAllParameters();
-                
-                this.visualizers.forEach(visualizer => {
-                    if (visualizer.updateParameters && visualizer.render) {
-                        visualizer.updateParameters(currentParams);
-                        visualizer.render();
-                    }
-                });
-                
+
+                this.updateVisualizers();
+
                 // Mobile debug: Log render activity periodically
                 if (window.mobileDebug && !this._renderActivityLogged) {
                     window.mobileDebug.log(`🎬 Quantum Engine: Actively rendering ${this.visualizers?.length} visualizers`);

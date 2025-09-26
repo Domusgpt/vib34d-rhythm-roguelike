@@ -4,7 +4,22 @@
  */
 
 export class PolychoraSystem {
-    constructor() {
+    constructor(options = {}) {
+        const {
+            canvasResources = {},
+            sharedResources = null,
+            resourceManager = null,
+            systemName = 'polychora',
+            config = {},
+        } = options || {};
+
+        this.canvasResources = canvasResources;
+        this.sharedResources = sharedResources;
+        this.resourceManager = resourceManager;
+        this.systemName = systemName;
+        this.config = config;
+        this.useExternalRenderLoop = Boolean(canvasResources && Object.keys(canvasResources).length);
+
         this.name = 'polychora';
         this.isActive = false;
         this.isInitialized = false;
@@ -85,12 +100,14 @@ export class PolychoraSystem {
                     this.engine.setActive(true);
                 }
                 
-                // Start render loop exactly like index.html
-                if (this.engine.startRenderLoop) {
-                    this.engine.startRenderLoop();
-                } else if (this.engine.render) {
-                    // Start manual render loop for Polychora
-                    this.startRenderLoop();
+                if (!this.useExternalRenderLoop) {
+                    // Start render loop exactly like index.html
+                    if (this.engine.startRenderLoop) {
+                        this.engine.startRenderLoop();
+                    } else if (this.engine.render) {
+                        // Start manual render loop for Polychora
+                        this.startRenderLoop();
+                    }
                 }
                 
                 // Force all visualizers to start rendering - CRITICAL for gallery preview
@@ -214,6 +231,29 @@ export class PolychoraSystem {
         
         this.renderLoopId = requestAnimationFrame(renderFrame);
         console.log('🔮 PolychoraSystem: Manual render loop started');
+    }
+
+    setActive(active) {
+        if (active) {
+            return this.activate();
+        }
+        return this.deactivate();
+    }
+
+    render(timestamp, frameData) {
+        if (!this.isActive) {
+            return;
+        }
+
+        if (this.engine?.render) {
+            this.engine.render(timestamp, frameData);
+        }
+    }
+
+    handleResize(width, height) {
+        if (this.engine?.handleResize) {
+            this.engine.handleResize(width, height);
+        }
     }
 
     /**
