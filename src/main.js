@@ -11,6 +11,11 @@ import { ParameterManager } from './core/Parameters.js';
 import { AudioService } from './game/audio/AudioService.js';
 import { GameUI } from './ui/GameUI.js';
 import { VisualizerEngine } from './core/VisualizerEngine.js';
+import { MobileOptimizationManager } from './game/mobile/MobileOptimizationManager.js';
+import { FeedbackOrchestrator } from './game/feedback/FeedbackOrchestrator.js';
+import { AdaptiveVisualizationManager } from './game/experience/AdaptiveVisualizationManager.js';
+
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
 class VIB34DRhythmGame {
     constructor() {
@@ -23,11 +28,27 @@ class VIB34DRhythmGame {
         this.audioService = new AudioService();
         this.gameUI = new GameUI();
         this.visualizer = new VisualizerEngine(this.gameCanvas);
+        this.audioBandElements = {};
 
         // Game state
         this.gameState = 'menu'; // menu, playing, paused, gameOver
         this.currentLevel = 1;
         this.selectedAudioSource = null;
+        this.preferences = this.loadPreferences();
+        this.mobileExperience = null;
+        this.performanceSamples = [];
+        this.feedback = new FeedbackOrchestrator({
+            canvas: this.gameCanvas,
+            hud: this.hudElement,
+            parameterManager: this.parameterManager,
+            audioService: this.audioService,
+            gameUI: this.gameUI
+        });
+        this.adaptiveVisuals = new AdaptiveVisualizationManager({
+            parameterManager: this.parameterManager,
+            visualizer: this.visualizer,
+            feedback: this.feedback
+        });
 
         this.initializeGame();
     }
@@ -40,6 +61,21 @@ class VIB34DRhythmGame {
         // Initialize visualizer with default parameters
         await this.visualizer.initialize();
         this.visualizer.setParameters(this.parameterManager.getAllParameters());
+        this.adaptiveVisuals.initialize();
+        this.adaptiveVisuals.setGameState('menu');
+
+        this.mobileExperience = new MobileOptimizationManager({
+            canvas: this.gameCanvas,
+            visualizer: this.visualizer,
+            parameterManager: this.parameterManager,
+            audioService: this.audioService,
+            startScreen: this.startScreen,
+            onPreferenceChanged: (key, value) => this.updatePreference(key, value),
+            onProfileApplied: (profile, context) => this.handleGraphicsProfileApplied(profile, context)
+        });
+        await this.mobileExperience.initialize();
+        this.applyMobilePreferences();
+        this.feedback?.onStateChange?.('menu');
 
         console.log('VIB34D Rhythm Roguelike initialized');
     }
@@ -51,11 +87,14 @@ class VIB34DRhythmGame {
         // Set canvas size to match container
         const resizeCanvas = () => {
             const rect = container.getBoundingClientRect();
-            canvas.width = rect.width;
-            canvas.height = rect.height;
+            const width = rect.width;
+            const height = rect.height;
 
             if (this.visualizer) {
-                this.visualizer.handleResize(canvas.width, canvas.height);
+                this.visualizer.handleResize(width, height);
+            } else {
+                canvas.width = width;
+                canvas.height = height;
             }
         };
 
@@ -72,15 +111,9 @@ class VIB34DRhythmGame {
 
         sourceButtons.forEach(btn => {
             btn.addEventListener('click', () => {
-                this.selectAudioSource(btn.dataset.source);
-                sourceButtons.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-
-                // Show/hide additional inputs
-                audioFileInput.style.display = btn.dataset.source === 'file' ? 'block' : 'none';
-                streamUrlInput.style.display = btn.dataset.source === 'stream' ? 'block' : 'none';
-
-                startButton.disabled = false;
+                const sourceType = btn.dataset.source;
+                this.selectAudioSource(sourceType);
+                this.applySourceSelectionUI(sourceType, this.hasSourceData(sourceType));
             });
         });
 
@@ -88,16 +121,27 @@ class VIB34DRhythmGame {
         audioFileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (file) {
-                this.selectedAudioSource = { type: 'file', data: file };
-                startButton.disabled = false;
+                this.selectAudioSource('file');
+                this.selectedAudioSource.data = file;
+                this.applySourceSelectionUI('file', true);
+            } else {
+                this.applySourceSelectionUI('file', false);
             }
         });
 
         // Stream URL handler
         streamUrlInput.addEventListener('input', (e) => {
             if (e.target.value.trim()) {
-                this.selectedAudioSource = { type: 'stream', data: e.target.value.trim() };
-                startButton.disabled = false;
+                const url = e.target.value.trim();
+                this.selectAudioSource('stream');
+                this.selectedAudioSource.data = url;
+                this.applySourceSelectionUI('stream', true);
+                this.updatePreference('lastStreamUrl', url);
+            } else {
+                this.selectAudioSource('stream');
+                this.selectedAudioSource.data = null;
+                this.applySourceSelectionUI('stream', false);
+                this.updatePreference('lastStreamUrl', '');
             }
         });
 
@@ -118,6 +162,15 @@ class VIB34DRhythmGame {
         document.getElementById('resume').addEventListener('click', () => this.resumeGame());
         document.getElementById('restart').addEventListener('click', () => this.restartLevel());
         document.getElementById('quit').addEventListener('click', () => this.quitToMenu());
+
+        this.restoreAudioPreferences();
+
+        const bandElements = document.querySelectorAll('.audio-bands [data-band]');
+        this.audioBandElements = {};
+        bandElements.forEach(element => {
+            if (!element.dataset.band) return;
+            this.audioBandElements[element.dataset.band] = element;
+        });
     }
 
     setupAudioSources() {
@@ -129,22 +182,49 @@ class VIB34DRhythmGame {
         this.audioService.onAnalyser((audioData) => {
             this.handleAudioData(audioData);
         });
+
+        this.audioService.onStructureChange((structureEvent) => {
+            this.handleStructureChange(structureEvent);
+        });
     }
 
-    selectAudioSource(sourceType) {
+    selectAudioSource(sourceType, persist = true) {
+        if (!sourceType) return;
         this.selectedAudioSource = { type: sourceType };
+        this.feedback?.onSourceSelected(sourceType);
+        if (persist) {
+            this.updatePreference('lastSourceType', sourceType);
+        }
     }
 
     async startGame() {
         try {
+            if (!this.selectedAudioSource) {
+                alert('Select an audio source to begin.');
+                return;
+            }
+
+            if ((this.selectedAudioSource.type === 'file' || this.selectedAudioSource.type === 'stream') &&
+                !this.selectedAudioSource.data) {
+                alert('Provide an audio file or stream URL before starting.');
+                return;
+            }
+
             this.startScreen.classList.remove('active');
             this.gameState = 'playing';
+            this.adaptiveVisuals?.setGameState('playing');
 
             // Initialize audio based on selected source
             await this.initializeAudio();
 
             // Start the game loop
             this.startGameLoop();
+
+            this.updatePreference('lastSessionTimestamp', Date.now());
+            const sessionCount = (this.preferences.sessionCount || 0) + 1;
+            this.updatePreference('sessionCount', sessionCount);
+            this.mobileExperience?.onGameStart();
+            this.feedback?.onStateChange('playing');
 
             console.log('Game started with audio source:', this.selectedAudioSource.type);
 
@@ -207,6 +287,10 @@ class VIB34DRhythmGame {
 
         // Update game UI
         this.gameUI.update(deltaTime);
+
+        // Feed performance metrics to the mobile experience layer
+        this.mobileExperience?.recordFrame(deltaTime);
+        this.feedback?.update(deltaTime);
     }
 
     render() {
@@ -223,53 +307,41 @@ class VIB34DRhythmGame {
 
         // Update UI beat indicator
         this.gameUI.showBeatIndicator();
+        this.mobileExperience?.handleBeat(beatData);
+        this.feedback?.onBeat(beatData);
+        this.adaptiveVisuals?.onBeat(beatData);
 
         console.log('Beat detected:', beatData);
     }
 
     handleAudioData(audioData) {
-        // Use audio frequency data to modulate visualizer parameters
-        const params = this.parameterManager.getAllParameters();
-
-        // Map audio bands to parameter changes
-        const bassLevel = audioData.frequencyData ? this.getFrequencyRange(audioData.frequencyData, 0, 0.1) : 0;
-        const midLevel = audioData.frequencyData ? this.getFrequencyRange(audioData.frequencyData, 0.1, 0.5) : 0;
-        const highLevel = audioData.frequencyData ? this.getFrequencyRange(audioData.frequencyData, 0.5, 1.0) : 0;
-
-        // Update parameters based on audio analysis
-        params.gridDensity = 15 + (bassLevel * 25); // 15-40 range
-        params.chaos = Math.min(highLevel * 0.8, 1.0); // 0-0.8 range
-        params.speed = 0.8 + (midLevel * 1.2); // 0.8-2.0 range
-        params.hue = (params.hue + (audioData.energy || 0) * 30) % 360;
-
-        this.parameterManager.setParameters(params);
-        this.visualizer.setParameters(params);
-
-        // Update audio visualization bars in HUD
-        this.updateAudioBars(bassLevel, midLevel, highLevel);
-    }
-
-    getFrequencyRange(frequencyData, startPercent, endPercent) {
-        const startIndex = Math.floor(frequencyData.length * startPercent);
-        const endIndex = Math.floor(frequencyData.length * endPercent);
-
-        let sum = 0;
-        let count = 0;
-
-        for (let i = startIndex; i < endIndex; i++) {
-            if (frequencyData[i] !== -Infinity) {
-                sum += Math.pow(10, frequencyData[i] / 20);
-                count++;
-            }
+        const analysis = audioData.analysis || this.audioService.getAnalysisSnapshot();
+        if (!analysis) {
+            return;
         }
 
-        return count > 0 ? sum / count : 0;
+        const bands = analysis.bands || {};
+        const bandSummary = {
+            bass: (bands.subBass + bands.bass) / 2 || 0,
+            mid: (bands.lowMid + bands.mid) / 2 || 0,
+            high: (bands.highMid + bands.presence + bands.brilliance) / 3 || 0
+        };
+
+        this.adaptiveVisuals.updateFromAudio(analysis);
+        this.updateAudioBands(bands);
+        this.feedback?.onAudioFrame(audioData.analysis || analysis, bandSummary);
     }
 
     generateBeatChallenge(beatData) {
         // Generate geometric challenge based on current parameters and beat strength
         const params = this.parameterManager.getAllParameters();
         const challengeType = this.getChallengeType(params.geometry, beatData.energy);
+
+        this.gameUI.showChallengeIndicator(challengeType);
+        this.feedback?.onChallenge(challengeType, {
+            energy: beatData.energy,
+            parameters: params
+        });
 
         // This will be expanded to generate specific challenges
         console.log('Generated challenge:', challengeType, 'for geometry:', params.geometry);
@@ -308,10 +380,26 @@ class VIB34DRhythmGame {
         document.querySelector('#dimension-meter .meter-fill').style.width = `${dimensionPercent}%`;
     }
 
-    updateAudioBars(bass, mid, high) {
-        document.getElementById('bass-band').style.height = `${bass * 100}%`;
-        document.getElementById('mid-band').style.height = `${mid * 100}%`;
-        document.getElementById('high-band').style.height = `${high * 100}%`;
+    updateAudioBands(bands = {}) {
+        if (!this.audioBandElements) return;
+
+        const entries = [
+            ['subBass', bands.subBass],
+            ['bass', bands.bass],
+            ['lowMid', bands.lowMid],
+            ['mid', bands.mid],
+            ['highMid', bands.highMid],
+            ['presence', bands.presence],
+            ['brilliance', bands.brilliance]
+        ];
+
+        entries.forEach(([key, value = 0]) => {
+            const element = this.audioBandElements[key];
+            if (!element) return;
+            const height = clamp(value * 100, 4, 100);
+            element.style.height = `${height}%`;
+            element.dataset.value = value.toFixed(3);
+        });
     }
 
     togglePause() {
@@ -326,6 +414,8 @@ class VIB34DRhythmGame {
         this.gameState = 'paused';
         this.audioService.pause();
         document.getElementById('pause-menu').classList.add('active');
+        this.feedback?.onStateChange('paused');
+        this.adaptiveVisuals?.setGameState('paused');
     }
 
     resumeGame() {
@@ -333,11 +423,14 @@ class VIB34DRhythmGame {
         this.audioService.play();
         document.getElementById('pause-menu').classList.remove('active');
         this.startGameLoop();
+        this.feedback?.onStateChange('playing');
+        this.adaptiveVisuals?.setGameState('playing');
     }
 
     restartLevel() {
         // Restart current level
         this.resumeGame();
+        this.feedback?.onStateChange('restarting');
         // Additional restart logic will be added
     }
 
@@ -350,6 +443,125 @@ class VIB34DRhythmGame {
         // Reset game state
         this.currentLevel = 1;
         this.selectedAudioSource = null;
+        this.mobileExperience?.onReturnToMenu();
+        this.feedback?.onStateChange('menu');
+        this.adaptiveVisuals?.setGameState('menu');
+    }
+
+    hasSourceData(sourceType) {
+        if (sourceType === 'mic') return true;
+        if (!this.selectedAudioSource) return false;
+        if (this.selectedAudioSource.type !== sourceType) {
+            return sourceType === 'mic';
+        }
+        return Boolean(this.selectedAudioSource.data);
+    }
+
+    applySourceSelectionUI(sourceType, hasData = false) {
+        const sourceButtons = document.querySelectorAll('.source-btn');
+        const audioFileInput = document.getElementById('audio-file');
+        const streamUrlInput = document.getElementById('stream-url');
+        const startButton = document.getElementById('start-game');
+
+        sourceButtons.forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.source === sourceType);
+        });
+
+        if (audioFileInput) {
+            audioFileInput.style.display = sourceType === 'file' ? 'block' : 'none';
+        }
+
+        if (streamUrlInput) {
+            streamUrlInput.style.display = sourceType === 'stream' ? 'block' : 'none';
+        }
+
+        if (startButton) {
+            const canStart = sourceType === 'mic' || hasData;
+            startButton.disabled = !canStart;
+        }
+
+        this.feedback?.onSourceSelected(sourceType);
+    }
+
+    restoreAudioPreferences() {
+        const sourceType = this.preferences?.lastSourceType;
+        if (!sourceType) return;
+
+        if (sourceType === 'stream' && this.preferences.lastStreamUrl) {
+            const streamInput = document.getElementById('stream-url');
+            if (streamInput) {
+                streamInput.value = this.preferences.lastStreamUrl;
+            }
+            this.selectedAudioSource = { type: 'stream', data: this.preferences.lastStreamUrl };
+        }
+
+        this.selectAudioSource(sourceType, false);
+        const hasData = this.hasSourceData(sourceType);
+        this.applySourceSelectionUI(sourceType, hasData);
+    }
+
+    applyMobilePreferences() {
+        if (!this.mobileExperience || !this.preferences) return;
+
+        if (this.preferences.graphicsProfile) {
+            this.mobileExperience.setGraphicsProfile(this.preferences.graphicsProfile, false);
+        }
+
+        if (typeof this.preferences.hapticsEnabled === 'boolean') {
+            this.mobileExperience.toggleHaptics(this.preferences.hapticsEnabled);
+        }
+
+        if (typeof this.preferences.tiltEnabled === 'boolean') {
+            this.mobileExperience.toggleTilt(this.preferences.tiltEnabled);
+        }
+    }
+
+    loadPreferences() {
+        if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+            return {};
+        }
+
+        try {
+            const stored = localStorage.getItem('vib34d-mobile-prefs');
+            return stored ? JSON.parse(stored) : {};
+        } catch (error) {
+            console.warn('Failed to read stored preferences', error);
+            return {};
+        }
+    }
+
+    savePreferences() {
+        if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+            return;
+        }
+
+        try {
+            localStorage.setItem('vib34d-mobile-prefs', JSON.stringify(this.preferences));
+        } catch (error) {
+            console.warn('Failed to persist preferences', error);
+        }
+    }
+
+    updatePreference(key, value) {
+        if (!this.preferences) {
+            this.preferences = {};
+        }
+
+        this.preferences[key] = value;
+        this.savePreferences();
+
+        if (key === 'graphicsProfile') {
+            this.adaptiveVisuals?.applyGraphicsProfile(value);
+        }
+    }
+
+    handleGraphicsProfileApplied(profile, context = {}) {
+        this.adaptiveVisuals?.applyGraphicsProfile(profile, context);
+    }
+
+    handleStructureChange(structureEvent) {
+        this.adaptiveVisuals?.onStructureChange(structureEvent);
+        this.feedback?.onStructureChange?.(structureEvent);
     }
 }
 

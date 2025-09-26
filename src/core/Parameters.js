@@ -88,6 +88,51 @@ export class ParameterManager {
             this.setParameter(name, value);
         }
     }
+
+    /**
+     * Apply a named or inline profile to the current parameter set.
+     * Accepts either an object with parameter overrides or a profile name.
+     */
+    applyProfile(profile) {
+        const profiles = {
+            battery: {
+                gridDensity: 12,
+                chaos: 0.15,
+                intensity: 0.5,
+                speed: 0.85
+            },
+            mobile: {
+                gridDensity: 18,
+                chaos: 0.22,
+                intensity: 0.65,
+                speed: 1.0
+            },
+            ultra: {
+                gridDensity: 26,
+                chaos: 0.3,
+                intensity: 0.85,
+                saturation: 0.95
+            }
+        };
+
+        let overrides = {};
+
+        if (typeof profile === 'string') {
+            overrides = profiles[profile] || {};
+        } else if (profile && typeof profile === 'object') {
+            overrides = profile;
+        }
+
+        if (!overrides || !Object.keys(overrides).length) {
+            return;
+        }
+
+        Object.entries(overrides).forEach(([key, value]) => {
+            if (this.parameterDefs[key]) {
+                this.setParameter(key, value);
+            }
+        });
+    }
     
     /**
      * Get a specific parameter value

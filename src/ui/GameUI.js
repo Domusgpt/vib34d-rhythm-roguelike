@@ -13,10 +13,7 @@ export class GameUI {
             dimensionMeter: document.querySelector('#dimension-meter .meter-fill'),
             health: document.getElementById('health'),
             pulse: document.getElementById('pulse'),
-            chaos: document.getElementById('chaos'),
-            bassBar: document.getElementById('bass-band'),
-            midBar: document.getElementById('mid-band'),
-            highBar: document.getElementById('high-band')
+            chaos: document.getElementById('chaos')
         };
 
         this.beatIndicatorTimeout = null;
@@ -118,21 +115,10 @@ export class GameUI {
         }
     }
 
-    updateAudioBars(bassLevel, midLevel, highLevel) {
-        if (this.elements.bassBar) {
-            this.elements.bassBar.style.height = `${Math.min(100, bassLevel * 100)}%`;
-        }
-        if (this.elements.midBar) {
-            this.elements.midBar.style.height = `${Math.min(100, midLevel * 100)}%`;
-        }
-        if (this.elements.highBar) {
-            this.elements.highBar.style.height = `${Math.min(100, highLevel * 100)}%`;
-        }
-    }
-
     showBeatIndicator() {
         // Visual feedback for beat detection
         document.body.classList.add('beat-flash');
+        document.body.classList.add('beat-flash-intense');
 
         if (this.beatIndicatorTimeout) {
             clearTimeout(this.beatIndicatorTimeout);
@@ -140,6 +126,7 @@ export class GameUI {
 
         this.beatIndicatorTimeout = setTimeout(() => {
             document.body.classList.remove('beat-flash');
+            document.body.classList.remove('beat-flash-intense');
         }, 150);
     }
 

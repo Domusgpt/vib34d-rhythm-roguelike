@@ -148,7 +148,15 @@ export class LatticePulseGame {
             bass: bands.bass,
             mid: bands.mid,
             high: bands.high,
-            energy: bands.energy
+            subBass: bands.subBass,
+            lowMid: bands.lowMid,
+            highMid: bands.highMid,
+            presence: bands.presence,
+            brilliance: bands.brilliance,
+            section: bands.section,
+            energy: bands.energy,
+            rhythmStability: bands.rhythmStability,
+            tension: bands.tension
         };
 
         this.spawnSystem.update(scaledDt);
