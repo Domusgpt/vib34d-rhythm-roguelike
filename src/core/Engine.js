@@ -13,7 +13,22 @@ import { ExportManager } from '../export/ExportManager.js';
 import { StatusManager } from '../ui/StatusManager.js';
 
 export class VIB34DIntegratedEngine {
-    constructor() {
+    constructor(options = {}) {
+        const {
+            canvasResources = {},
+            sharedResources = null,
+            resourceManager = null,
+            systemName = 'faceted',
+            config = {},
+        } = options || {};
+
+        this.canvasResources = canvasResources;
+        this.sharedResources = sharedResources;
+        this.resourceManager = resourceManager;
+        this.systemName = systemName;
+        this.config = config;
+        this.useExternalRenderLoop = Boolean(canvasResources && Object.keys(canvasResources).length);
+
         // Core system components
         this.visualizers = [];
         this.parameterManager = new ParameterManager();
@@ -59,7 +74,9 @@ export class VIB34DIntegratedEngine {
             this.setupInteractions();
             this.loadCustomVariations();
             this.populateVariationGrid();
-            this.startRenderLoop();
+            if (!this.useExternalRenderLoop) {
+                this.startRenderLoop();
+            }
             
             this.statusManager.setStatus('VIB34D Engine initialized successfully', 'success');
             console.log('✅ VIB34D Engine ready');
@@ -563,7 +580,11 @@ export class VIB34DIntegratedEngine {
     setActive(active) {
         console.log(`🔷 Faceted Engine setActive: ${active}`);
         this.isActive = active; // Set active state for interactions
-        
+
+        if (this.useExternalRenderLoop) {
+            return;
+        }
+
         if (active && !this.animationId) {
             console.log('🎬 Faceted Engine: Starting animation loop');
             this.startRenderLoop();
@@ -572,6 +593,24 @@ export class VIB34DIntegratedEngine {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;
         }
+    }
+
+    render() {
+        if (!this.isActive) {
+            return;
+        }
+
+        this.updateVisualizers();
+    }
+
+    handleResize(width, height) {
+        this.visualizers.forEach((visualizer) => {
+            if (typeof visualizer.handleResize === 'function') {
+                visualizer.handleResize(width, height);
+            } else if (typeof visualizer.resize === 'function') {
+                visualizer.resize(width, height);
+            }
+        });
     }
     
     /**

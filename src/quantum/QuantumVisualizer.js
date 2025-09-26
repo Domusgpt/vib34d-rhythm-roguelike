@@ -4,12 +4,25 @@
  */
 
 export class QuantumHolographicVisualizer {
-    constructor(canvasId, role = 'content', reactivity = 1.0, variant = 0) {
-        this.canvasId = canvasId;
-        this.canvas = document.getElementById(canvasId);
+    constructor(canvasInput, role = 'content', reactivity = 1.0, variantOrOptions = 0, maybeOptions = {}) {
+        let variant = variantOrOptions;
+        let options = maybeOptions;
+
+        if (variantOrOptions && typeof variantOrOptions === 'object') {
+            options = variantOrOptions;
+            variant = typeof variantOrOptions.variant === 'number' ? variantOrOptions.variant : 0;
+        }
+
         this.role = role;
         this.reactivity = reactivity;
         this.variant = variant;
+        this.sharedResources = options?.sharedResources || null;
+        this.externalContext = options?.context || null;
+
+        this.canvas = this.resolveCanvas(canvasInput, options);
+        this.canvasId = typeof canvasInput === 'string'
+            ? canvasInput
+            : this.canvas?.id || options?.canvasId || 'quantum-layer';
 
         // Mobile detection and optimization
         this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -53,6 +66,9 @@ export class QuantumHolographicVisualizer {
             rot4dZW: 0.0
         };
 
+        this.vertexCount = 4;
+        this.bufferStride = 0;
+
         this.init();
     }
 
@@ -72,14 +88,18 @@ export class QuantumHolographicVisualizer {
 
     createWebGLContext() {
         // Try WebGL2 first, fallback to WebGL1
-        this.gl = this.canvas.getContext('webgl2', this.contextOptions) ||
-                  this.canvas.getContext('webgl', this.contextOptions) ||
-                  this.canvas.getContext('experimental-webgl', this.contextOptions);
+        if (this.externalContext) {
+            this.gl = this.externalContext;
+        } else {
+            this.gl = this.canvas.getContext('webgl2', this.contextOptions) ||
+                      this.canvas.getContext('webgl', this.contextOptions) ||
+                      this.canvas.getContext('experimental-webgl', this.contextOptions);
 
-        if (!this.gl) {
-            console.error(`WebGL not supported for ${this.canvasId}`);
-            this.showWebGLError();
-            return;
+            if (!this.gl) {
+                console.error(`WebGL not supported for ${this.canvasId}`);
+                this.showWebGLError();
+                return;
+            }
         }
 
         // Enable blending for transparency
@@ -343,15 +363,26 @@ void main() {
     }
 
     initBuffers() {
-        const positions = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+        const sharedBuffer = this.sharedResources?.buffers?.screen_quad;
 
-        this.buffer = this.gl.createBuffer();
+        if (sharedBuffer?.handle) {
+            this.buffer = sharedBuffer.handle;
+            this.vertexCount = sharedBuffer.vertexCount ?? 4;
+            this.bufferStride = sharedBuffer.stride ?? 0;
+        } else {
+            const positions = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+            this.buffer = this.gl.createBuffer();
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffer);
+            this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
+            this.vertexCount = 4;
+            this.bufferStride = 0;
+        }
+
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.buffer);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
 
         const positionLocation = this.gl.getAttribLocation(this.program, 'a_position');
         this.gl.enableVertexAttribArray(positionLocation);
-        this.gl.vertexAttribPointer(positionLocation, 2, this.gl.FLOAT, false, 0, 0);
+        this.gl.vertexAttribPointer(positionLocation, 2, this.gl.FLOAT, false, this.bufferStride, 0);
     }
 
     resize() {
@@ -417,7 +448,28 @@ void main() {
         this.gl.uniform1f(this.uniforms.clickIntensity, this.clickIntensity);
         this.gl.uniform1f(this.uniforms.roleIntensity, roleIntensities[this.role] || 1.0);
 
-        this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+        const vertexCount = this.vertexCount || 4;
+        this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, vertexCount);
+    }
+
+    resolveCanvas(canvasInput, options) {
+        if (!canvasInput) {
+            return options?.canvas || null;
+        }
+
+        if (typeof HTMLCanvasElement !== 'undefined' && canvasInput instanceof HTMLCanvasElement) {
+            return canvasInput;
+        }
+
+        if (typeof HTMLCanvasElement !== 'undefined' && canvasInput?.canvas instanceof HTMLCanvasElement) {
+            return canvasInput.canvas;
+        }
+
+        if (typeof canvasInput === 'string') {
+            return document.getElementById(canvasInput);
+        }
+
+        return options?.canvas || null;
     }
 
     showWebGLError() {
