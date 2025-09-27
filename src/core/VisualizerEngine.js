@@ -119,15 +119,19 @@ export class VisualizerEngine {
 
     this.stateManager.dispatch({ type: 'system/updateSupport', payload: { webglSupport: true } });
 
-    this.canvasPool.initialize();
-
-    this.registerEngines();
-    await this.engineCoordinator.initialize();
-
     const restored = this.stateManager.restoreState();
     const state = this.stateManager.getState();
     this.currentParameters = { ...state.visualization.parameters };
-    const initialSystem = restored ? state.visualization.activeSystem : 'faceted';
+    let initialSystem = restored ? state.visualization.activeSystem : 'faceted';
+    if (!COORDINATED_SYSTEMS.includes(initialSystem)) {
+      initialSystem = 'faceted';
+    }
+
+    this.canvasPool.initialize({ initialSystem });
+
+    this.registerEngines();
+    await this.engineCoordinator.initialize({ initialSystem });
+
     await this.engineCoordinator.switchEngine(initialSystem);
     this.currentSystem = initialSystem;
 

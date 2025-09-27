@@ -292,13 +292,19 @@ test('EngineCoordinator orchestrates engine lifecycle', async () => {
   coordinator.registerEngine('faceted', StubEngine);
   coordinator.registerEngine('quantum', StubEngine);
 
-  await coordinator.initialize();
+  await coordinator.initialize({ initialSystem: 'faceted' });
 
   const faceted = coordinator.getEngine('faceted');
-  const quantum = coordinator.getEngine('quantum');
 
   assert(faceted instanceof StubEngine, 'Faceted engine should be initialised');
-  assert(quantum instanceof StubEngine, 'Quantum engine should be initialised');
+  assert(
+    coordinator.getEngine('quantum') === null,
+    'Quantum engine should initialise lazily until requested',
+  );
+
+  await coordinator.ensureEngine('quantum');
+  const quantum = coordinator.getEngine('quantum');
+  assert(quantum instanceof StubEngine, 'Quantum engine should be initialised on demand');
   assert(resourceManager.buffers.length > 0, 'Shared buffers should be created');
   assert(resourceManager.textures.length > 0, 'Shared textures should be created');
   assert(resourceManager.shaders.length > 0, 'Shared shaders should be created');
@@ -318,6 +324,10 @@ test('EngineCoordinator orchestrates engine lifecycle', async () => {
   const secondSwitch = await coordinator.switchEngine('quantum');
   assert(secondSwitch === true, 'Switching to quantum should succeed');
   assert(faceted.active === false, 'Previous engine should be deactivated');
+  assert(
+    coordinator.getEngine('faceted') === null,
+    'Previous engine should be released after switching to a new system',
+  );
   assert(quantum.active === true, 'Target engine should be active');
   assert(actions.some((action) => action.type === 'visualization/switchSystem' && action.payload === 'quantum'), 'StateManager should receive switch action');
 

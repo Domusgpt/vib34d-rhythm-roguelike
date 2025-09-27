@@ -57,6 +57,7 @@ export class EngineCoordinator {
     this.engines = new Map();
     this.sharedResources = new Map();
     this.engineResourceUsage = new Map();
+    this.engineSnapshots = new Map();
     this.activeEngine = null;
     this.transitionState = 'idle';
 
@@ -75,22 +76,44 @@ export class EngineCoordinator {
     this.engineConfigs.set(systemName, { ...currentConfig, ...overrides });
   }
 
-  async initialize() {
-    await this.initializeSharedResources();
+  async initialize({ initialSystem = null } = {}) {
+    const orderedSystems = this.getOrderedSystems();
+    const defaultSystem = (initialSystem && this.engineClasses.has(initialSystem))
+      ? initialSystem
+      : orderedSystems[0] || null;
 
-    const orderedEntries = [...this.engineConfigs.entries()]
-      .sort((a, b) => (a[1].initializationOrder ?? 0) - (b[1].initializationOrder ?? 0));
-
-    for (const [systemName] of orderedEntries) {
-      if (!this.engineClasses.has(systemName) || this.engines.has(systemName)) {
-        continue;
-      }
-
-      const engineInstance = await this.initializeEngine(systemName);
-      if (engineInstance) {
-        this.engines.set(systemName, engineInstance);
-      }
+    if (defaultSystem) {
+      this.canvasPool?.ensureSystem?.(defaultSystem);
     }
+
+    await this.initializeSharedResources(defaultSystem ? [defaultSystem] : []);
+
+    if (defaultSystem) {
+      await this.ensureEngine(defaultSystem);
+    }
+  }
+
+  getOrderedSystems() {
+    return [...this.engineConfigs.entries()]
+      .sort((a, b) => (a[1].initializationOrder ?? 0) - (b[1].initializationOrder ?? 0))
+      .map(([systemName]) => systemName);
+  }
+
+  async ensureEngine(systemName) {
+    if (this.engines.has(systemName)) {
+      return this.engines.get(systemName);
+    }
+
+    if (!this.engineClasses.has(systemName)) {
+      return null;
+    }
+
+    this.canvasPool?.ensureSystem?.(systemName);
+    const engineInstance = await this.initializeEngine(systemName);
+    if (engineInstance) {
+      this.engines.set(systemName, engineInstance);
+    }
+    return engineInstance;
   }
 
   async initializeEngine(systemName) {
@@ -147,15 +170,21 @@ export class EngineCoordinator {
     return resources;
   }
 
-  async initializeSharedResources() {
+  async initializeSharedResources(preferredSystems = []) {
     if (this.sharedResources.size > 0 || !this.resourceManager) {
       return;
     }
 
-    const seed = this.canvasPool?.getCanvasResources('faceted', 'background')
-      || this.canvasPool?.getCanvasResources('quantum', 'background')
-      || this.canvasPool?.getCanvasResources('holographic', 'background')
-      || this.canvasPool?.getCanvasResources('polychora', 'background');
+    const candidates = [...new Set([...preferredSystems, ...this.getOrderedSystems()])];
+    let seed = null;
+
+    for (const systemName of candidates) {
+      const resource = this.canvasPool?.getCanvasResources(systemName, 'background');
+      if (resource?.contextId) {
+        seed = resource;
+        break;
+      }
+    }
 
     if (!seed?.contextId) {
       console.warn('EngineCoordinator: unable to build shared resources (no context)');
@@ -294,22 +323,32 @@ export class EngineCoordinator {
       return false;
     }
 
-    if (!this.engines.has(targetSystemName)) {
-      console.error(`EngineCoordinator: engine ${targetSystemName} is not initialised`);
+    if (!this.engineClasses.has(targetSystemName)) {
+      console.error(`EngineCoordinator: engine ${targetSystemName} is not registered`);
       return false;
+    }
+
+    const nextEngineInstance = await this.ensureEngine(targetSystemName);
+    if (!nextEngineInstance) {
+      console.error(`EngineCoordinator: failed to prepare engine ${targetSystemName}`);
+      return false;
+    }
+
+    if (this.activeEngine === targetSystemName) {
+      return true;
     }
 
     this.transitionState = 'transitioning';
 
     try {
-      if (this.activeEngine) {
-        await this.deactivateEngine(this.activeEngine);
+      const previousEngine = this.activeEngine;
+      if (previousEngine) {
+        await this.deactivateEngine(previousEngine);
       }
 
       this.canvasPool?.switchToSystem(targetSystemName);
 
-      const nextEngine = this.engines.get(targetSystemName);
-      await this.activateEngine(nextEngine, targetSystemName);
+      await this.activateEngine(nextEngineInstance, targetSystemName);
       this.activeEngine = targetSystemName;
       this.transitionState = 'idle';
 
@@ -317,6 +356,10 @@ export class EngineCoordinator {
         type: 'visualization/switchSystem',
         payload: targetSystemName,
       });
+
+      if (previousEngine && previousEngine !== targetSystemName) {
+        this.releaseEngine(previousEngine);
+      }
 
       return true;
     } catch (error) {
@@ -334,7 +377,35 @@ export class EngineCoordinator {
 
     engine.setActive?.(false);
     await engine.deactivate?.();
-    await engine.saveState?.();
+
+    if (typeof engine.saveState === 'function') {
+      try {
+        const snapshot = await engine.saveState();
+        if (snapshot !== undefined) {
+          this.engineSnapshots.set(systemName, snapshot);
+        }
+      } catch (error) {
+        console.warn(`EngineCoordinator: saveState failed for ${systemName}`, error);
+      }
+    }
+  }
+
+  releaseEngine(systemName) {
+    const engine = this.engines.get(systemName);
+    if (!engine) {
+      return;
+    }
+
+    try {
+      engine.destroy?.();
+    } catch (error) {
+      console.warn(`EngineCoordinator: destroy failed for ${systemName}`, error);
+    }
+
+    this.detachResourceUsage(systemName);
+    this.engines.delete(systemName);
+    this.engineSnapshots.delete(systemName);
+    this.canvasPool?.resetSystem?.(systemName);
   }
 
   async activateEngine(engine, systemName) {

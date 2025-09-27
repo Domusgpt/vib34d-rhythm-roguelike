@@ -69,18 +69,23 @@ export class CanvasResourcePool {
     this.containerElements = new Map();
     this.canvases = new Map();
     this.contextRecords = new Map();
+    this.initializedSystems = new Set();
     this.resizeHandler = null;
     this.activeSystem = null;
     this.initialised = false;
   }
 
-  initialize() {
+  initialize({ initialSystem = null } = {}) {
     if (this.initialised) {
       return;
     }
 
     this.createContainerElements();
-    this.preallocateCanvases();
+    if (initialSystem && this.systems.includes(initialSystem)) {
+      this.ensureSystem(initialSystem);
+    } else if (this.systems.length > 0) {
+      this.ensureSystem(this.systems[0]);
+    }
     this.setupResizeHandler();
     this.initialised = true;
   }
@@ -121,18 +126,23 @@ export class CanvasResourcePool {
    * Pre-allocate canvases and WebGL contexts for each system up-front so
    * runtime transitions simply reuse pooled resources.
    */
-  preallocateCanvases() {
+  preallocateCanvases(systems = this.systems) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const { innerWidth: viewWidth, innerHeight: viewHeight } = window;
 
-    this.systems.forEach((systemName) => {
+    systems.forEach((systemName) => {
       const layerSchemas = this.layerSchemas[systemName] || [];
       const container = this.containerElements.get(systemName);
       if (!container) {
         return;
       }
 
+      if (this.initializedSystems.has(systemName)) {
+        return;
+      }
+
       const canvases = [];
+      this.canvases.set(systemName, canvases);
       const totalLayers = Math.min(Math.max(layerSchemas.length, 1), this.maxCanvasesPerSystem);
 
       for (let index = 0; index < totalLayers; index += 1) {
@@ -151,7 +161,7 @@ export class CanvasResourcePool {
         this.prepareContext(record.canvas, systemName, index, record.key);
       }
 
-      this.canvases.set(systemName, canvases);
+      this.initializedSystems.add(systemName);
     });
   }
 
@@ -248,6 +258,7 @@ export class CanvasResourcePool {
    * the next and ensuring all contexts are healthy.
    */
   switchToSystem(systemName) {
+    this.ensureSystem(systemName);
     if (!this.systems.includes(systemName)) {
       console.warn(`CanvasResourcePool: unknown system ${systemName}`);
       return;
@@ -329,6 +340,7 @@ export class CanvasResourcePool {
   }
 
   getCanvasResources(systemName, layer = 0) {
+    this.ensureSystem(systemName);
     const canvases = this.canvases.get(systemName);
     if (!canvases || canvases.length === 0) {
       console.error(`CanvasResourcePool: no canvases registered for system ${systemName}`);
@@ -405,20 +417,14 @@ export class CanvasResourcePool {
       this.resizeHandler = null;
     }
 
-    this.contextRecords.forEach(({ context, contextId }) => {
-      if (contextId) {
-        this.resourceManager?.unregisterWebGLContext(contextId);
-      }
-
-      if (context && !context.isContextLost?.()) {
-        const extension = context.getExtension?.('WEBGL_lose_context');
-        extension?.loseContext?.();
-      }
+    this.systems.forEach((systemName) => {
+      this.resetSystem(systemName);
     });
 
     this.canvases.clear();
     this.contextRecords.clear();
     this.containerElements.clear();
+    this.initializedSystems.clear();
     this.activeSystem = null;
     this.initialised = false;
   }
@@ -429,6 +435,47 @@ export class CanvasResourcePool {
 
   getContextId(systemName, layerIndex) {
     return `${systemName}-layer-${layerIndex}`;
+  }
+
+  ensureSystem(systemName) {
+    if (!this.systems.includes(systemName)) {
+      return;
+    }
+
+    if (this.initializedSystems.has(systemName)) {
+      return;
+    }
+
+    this.preallocateCanvases([systemName]);
+  }
+
+  resetSystem(systemName) {
+    const canvases = this.canvases.get(systemName);
+    if (!canvases) {
+      return;
+    }
+
+    canvases.forEach(({ canvas }) => {
+      const record = this.contextRecords.get(canvas);
+      if (record?.context) {
+        try {
+          this.resourceManager?.unregisterWebGLContext?.(record.contextId);
+          const extension = record.context.getExtension?.('WEBGL_lose_context');
+          extension?.loseContext?.();
+        } catch (error) {
+          console.warn(`CanvasResourcePool: failed to release context for ${systemName}`, error);
+        }
+      }
+
+      if (canvas?.parentElement) {
+        canvas.parentElement.removeChild(canvas);
+      }
+
+      this.contextRecords.delete(canvas);
+    });
+
+    this.canvases.delete(systemName);
+    this.initializedSystems.delete(systemName);
   }
 }
 
