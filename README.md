@@ -52,6 +52,17 @@ npx serve -p 8000
 open http://localhost:8000
 ```
 
+## ✅ Testing & Validation
+
+```bash
+npm test
+```
+
+The test harness runs lightweight Node-based integration checks that validate the architecture refactor:
+
+- **State persistence** – Confirms the Redux-inspired `StateManager` serialises and restores gameplay/system state exactly as documented in the architectural analysis.
+- **Engine orchestration** – Exercises the `EngineCoordinator` lifecycle (initialisation, switching, resizing, teardown) with stub engines to ensure resource sharing and activation flows remain deterministic.
+
 ### **Requirements**
 - Modern browser with WebGL 2.0 support
 - Audio input permission for microphone mode
