@@ -317,6 +317,10 @@ export class EngineCoordinator {
     return this.engines.get(systemName) || null;
   }
 
+  getActiveSystem() {
+    return this.activeEngine || null;
+  }
+
   async switchEngine(targetSystemName) {
     if (this.transitionState !== 'idle') {
       console.warn('EngineCoordinator: transition already in progress');

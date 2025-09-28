@@ -11,9 +11,10 @@
 - **Resource usage tracking** – Captured shared buffer/texture/shader ownership per engine and mapped pooled resource handles to durable IDs so the coordinator can record attachment/detachment against the ResourceManager audit trail.【F:src/core/ResourceManager.js†L220-L360】【F:src/core/EngineCoordinator.js†L1-L192】
 - **Hypercube fallback integration** – Provisioned dedicated pooled canvases and refactored the hypercube visualizer to consume pooled WebGL contexts, enabling seamless mode toggles without recreating contexts.【F:src/core/CanvasManager.js†L10-L86】【F:src/visualizers/HypercubeGameSystem.js†L1-L120】【F:src/core/VisualizerEngine.js†L180-L224】
 - **Orchestration validation harness** – Added a Node-based smoke test runner that exercises state persistence and engine switching/teardown workflows ahead of the testing break.【F:tests/run-tests.js†L1-L214】
+- **Visual baseline capture tooling** – Implemented a `BaselineCaptureManager` that reuses the coordinator, canvas pool, and parameter mapper to snapshot canonical frames and wired it into the visualizer facade with regression coverage.【F:src/core/BaselineCaptureManager.js†L1-L210】【F:src/core/VisualizerEngine.js†L1-L347】【F:tests/run-tests.js†L400-L470】
 
 ## Remaining Work Before Refactor & Testing Break
-- **Visual baseline capture** – Record reference renders for each engine under canonical parameter sets so shader/regression changes can be detected automatically during the testing break.【F:src/core/VisualizerEngine.js†L252-L347】
+- **Extended regression scenarios** – Layer additional smoke tests that simulate context recovery and resource pressure now that baseline capture support is in place.【F:tests/run-tests.js†L1-L520】
 
 ## Next Steps
 1. Capture visual baselines for the new shader pipelines to confirm parity with the original systems before further optimisation.

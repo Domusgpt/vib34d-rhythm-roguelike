@@ -261,6 +261,14 @@ export class ParameterMappingSystem {
     return { ...this.baseParameters };
   }
 
+  getAudioState() {
+    return { ...this.audioState };
+  }
+
+  getInteractionState() {
+    return JSON.parse(JSON.stringify(this.interactionState));
+  }
+
   updateEffectiveParameters() {
     const computed = this.computeEffectiveParameters();
     if (shallowEqual(this.effectiveParameters, computed)) {

@@ -65,6 +65,7 @@ globalThis.navigator = { userAgent: 'node' };
 const { StateManager } = await import('../src/core/StateManager.js');
 const { EngineCoordinator } = await import('../src/core/EngineCoordinator.js');
 const { ParameterMappingSystem } = await import('../src/core/ParameterMappingSystem.js');
+const { BaselineCaptureManager } = await import('../src/core/BaselineCaptureManager.js');
 
 const tests = [];
 
@@ -135,16 +136,46 @@ class StubCanvasPool {
   constructor() {
     this.switches = [];
     this.resizes = [];
+    this.systems = new Set();
+    this.resources = new Map();
+  }
+
+  ensureSystem(systemName) {
+    this.systems.add(systemName);
   }
 
   getCanvasResources(systemName, layerName) {
-    return {
-      canvas: { id: `${systemName}-${layerName}` },
-      context: { isContextLost: () => false },
-      contextId: 'ctx-main',
-      isValid: true,
-      key: layerName,
-    };
+    const key = `${systemName}-${layerName}`;
+    if (!this.resources.has(key)) {
+      const canvas = {
+        id: key,
+        width: 256,
+        height: 256,
+        toDataURL: (mimeType = 'image/png') => `data:${mimeType};base64,${Buffer.from(key).toString('base64')}`,
+      };
+      const context = {
+        RGBA: 0x1908,
+        UNSIGNED_BYTE: 0x1401,
+        isContextLost: () => false,
+        readPixels: (x, y, width, height, format, type, buffer) => {
+          if (buffer instanceof Uint8Array) {
+            buffer.fill(0);
+          }
+          return { x, y, width, height, format, type };
+        },
+      };
+
+      this.resources.set(key, {
+        canvas,
+        context,
+        contextId: `ctx-${key}`,
+        isValid: true,
+        key: layerName,
+        layerIndex: 0,
+      });
+    }
+
+    return this.resources.get(key);
   }
 
   switchToSystem(systemName) {
@@ -392,6 +423,8 @@ test('ParameterMappingSystem fuses audio and interaction data into effective par
   });
 
   const effective = mapper.getEffectiveParameters();
+  const audioSnapshot = mapper.getAudioState();
+  const interactionSnapshot = mapper.getInteractionState();
 
   const within = (actual, expected, epsilon = 1e-6) => Math.abs(actual - expected) <= epsilon;
 
@@ -413,6 +446,60 @@ test('ParameterMappingSystem fuses audio and interaction data into effective par
   const baseSnapshot = mapper.getBaseParameters();
   assert(within(baseSnapshot.gridDensity, 20), 'Base grid density should remain unchanged');
   assert(within(baseSnapshot.morphFactor, 0.5), 'Base morph factor should remain unchanged');
+  assert(audioSnapshot.bass === 0.5 && audioSnapshot.mid === 0.4, 'Audio snapshot should capture mapped bands');
+  assert(
+    interactionSnapshot.mouseMovement.normalizedX === 0.7
+      && interactionSnapshot.scroll.lastDelta === 0.6,
+    'Interaction snapshot should preserve recent interactions',
+  );
+});
+
+test('BaselineCaptureManager captures baseline frames and restores the active system', async () => {
+  const canvasPool = new StubCanvasPool();
+  const resourceManager = new StubResourceManager();
+  const stateManager = new StateManager();
+  const coordinator = new EngineCoordinator(canvasPool, { resourceManager, stateManager });
+
+  coordinator.registerEngine('faceted', StubEngine, { requiredLayers: ['content'] });
+  coordinator.registerEngine('quantum', StubEngine, { requiredLayers: ['content'] });
+
+  await coordinator.initialize({ initialSystem: 'faceted' });
+  await coordinator.ensureEngine('quantum');
+  await coordinator.switchEngine('faceted');
+
+  const mapper = new ParameterMappingSystem({ gridDensity: 12, intensity: 0.4 });
+  const clock = (() => {
+    let value = 0;
+    return () => {
+      value += 16;
+      return value;
+    };
+  })();
+
+  const captureManager = new BaselineCaptureManager({
+    engineCoordinator: coordinator,
+    canvasPool,
+    parameterMappingSystem: mapper,
+    clock,
+  });
+
+  const captures = await captureManager.captureBaselines([
+    {
+      systemName: 'quantum',
+      parameters: { gridDensity: 18, intensity: 0.5 },
+      frames: 2,
+      settleMs: 0,
+    },
+  ]);
+
+  assert(Array.isArray(captures) && captures.length === 1, 'Capture should return a single baseline result');
+  const quantumBaseline = captures[0];
+  assert(quantumBaseline.systemName === 'quantum', 'Baseline should include the requested system name');
+  assert(quantumBaseline.frames.length === 2, 'Baseline should include requested frame count');
+  assert(/^data:image\/png/.test(quantumBaseline.frames[0].dataUrl), 'Baseline should capture canvas data URL');
+  assert(quantumBaseline.effectiveParameters.gridDensity === 18, 'Baseline should record effective grid density');
+  assert(mapper.getBaseParameters().gridDensity === 12, 'Parameter mapper should be restored to original base values');
+  assert(coordinator.getActiveSystem() === 'faceted', 'Active system should be restored after capture completes');
 });
 
 async function run() {

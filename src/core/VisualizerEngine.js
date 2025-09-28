@@ -20,6 +20,7 @@ import { ReactivityManager } from './ReactivityManager.js';
 import { ResourceManager } from './ResourceManager.js';
 import { StateManager } from './StateManager.js';
 import { ParameterMappingSystem } from './ParameterMappingSystem.js';
+import { BaselineCaptureManager } from './BaselineCaptureManager.js';
 
 const COORDINATED_SYSTEMS = ['faceted', 'quantum', 'holographic', 'polychora'];
 
@@ -110,6 +111,11 @@ export class VisualizerEngine {
     this.currentParameters = { ...(visualizationState?.parameters || {}) };
     this.parameterMappingSystem = new ParameterMappingSystem(this.currentParameters);
     this.currentEffectiveParameters = this.parameterMappingSystem.getEffectiveParameters();
+    this.baselineManager = new BaselineCaptureManager({
+      engineCoordinator: this.engineCoordinator,
+      canvasPool: this.canvasPool,
+      parameterMappingSystem: this.parameterMappingSystem,
+    });
     this.unsubscribe = null;
     this.stateSyncInProgress = false;
     this.initialised = false;
@@ -370,6 +376,13 @@ export class VisualizerEngine {
       return this.hypercubeSystem;
     }
     return this.engineCoordinator.getEngine(systemName);
+  }
+
+  async captureBaselines(requests = [], options = {}) {
+    if (!this.baselineManager) {
+      return [];
+    }
+    return this.baselineManager.captureBaselines(requests, options);
   }
 
   invokeAcrossSystems(methodName, args = [], { includeHypercube = true } = {}) {
