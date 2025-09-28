@@ -19,6 +19,7 @@ import { EngineCoordinator } from './EngineCoordinator.js';
 import { ReactivityManager } from './ReactivityManager.js';
 import { ResourceManager } from './ResourceManager.js';
 import { StateManager } from './StateManager.js';
+import { ParameterMappingSystem } from './ParameterMappingSystem.js';
 
 const COORDINATED_SYSTEMS = ['faceted', 'quantum', 'holographic', 'polychora'];
 
@@ -105,7 +106,10 @@ export class VisualizerEngine {
     this.reactivityManager = null;
     this.hypercubeSystem = null;
     this.currentSystem = 'faceted';
-    this.currentParameters = { ...this.stateManager.getVisualizationState().parameters };
+    const visualizationState = this.stateManager.getVisualizationState();
+    this.currentParameters = { ...(visualizationState?.parameters || {}) };
+    this.parameterMappingSystem = new ParameterMappingSystem(this.currentParameters);
+    this.currentEffectiveParameters = this.parameterMappingSystem.getEffectiveParameters();
     this.unsubscribe = null;
     this.stateSyncInProgress = false;
     this.initialised = false;
@@ -122,6 +126,10 @@ export class VisualizerEngine {
     const restored = this.stateManager.restoreState();
     const state = this.stateManager.getState();
     this.currentParameters = { ...state.visualization.parameters };
+    if (this.parameterMappingSystem) {
+      this.parameterMappingSystem.setBaseParameters(this.currentParameters);
+      this.currentEffectiveParameters = this.parameterMappingSystem.getEffectiveParameters();
+    }
     let initialSystem = restored ? state.visualization.activeSystem : 'faceted';
     if (!COORDINATED_SYSTEMS.includes(initialSystem)) {
       initialSystem = 'faceted';
@@ -134,10 +142,18 @@ export class VisualizerEngine {
 
     await this.engineCoordinator.switchEngine(initialSystem);
     this.currentSystem = initialSystem;
+    this.pushEffectiveParameters(initialSystem);
 
     this.stateManager.dispatch({ type: 'system/initialize' });
 
-    this.reactivityManager = new ReactivityManager();
+    this.reactivityManager = new ReactivityManager({
+      onParameterUpdate: (param, value) => this.handleInteractiveParameterUpdate(param, value),
+      onInteractionStateChange: (interactionState) => {
+        if (this.parameterMappingSystem?.setInteractionState(interactionState)) {
+          this.pushEffectiveParameters();
+        }
+      },
+    });
     this.reactivityManager.initialize(this.canvas);
     this.reactivityManager.setActiveSystem(initialSystem, this.engineCoordinator.getEngine(initialSystem));
 
@@ -210,11 +226,8 @@ export class VisualizerEngine {
       if (rect) {
         this.hypercubeSystem?.handleResize?.(rect.width, rect.height);
       }
-      this.applyParameters(this.currentParameters, {
-        targetSystem: 'hypercube',
-        replace: true,
-        suppressDispatch: true,
-      });
+      this.parameterMappingSystem?.setBaseParameters(this.currentParameters);
+      this.pushEffectiveParameters('hypercube');
 
       if (!fromState) {
         this.stateManager.dispatch({ type: 'visualization/switchSystem', payload: 'hypercube' });
@@ -235,11 +248,8 @@ export class VisualizerEngine {
     this.currentSystem = systemName;
     const engine = this.engineCoordinator.getEngine(systemName);
     this.reactivityManager?.setActiveSystem(systemName, engine);
-    this.applyParameters(this.currentParameters, {
-      targetSystem: systemName,
-      replace: true,
-      suppressDispatch: true,
-    });
+    this.parameterMappingSystem?.setBaseParameters(this.currentParameters);
+    this.pushEffectiveParameters(systemName);
 
     if (!fromState) {
       this.stateManager.dispatch({ type: 'visualization/switchSystem', payload: systemName });
@@ -252,11 +262,16 @@ export class VisualizerEngine {
     const nextParameters = replace ? { ...parameters } : { ...this.currentParameters, ...parameters };
     this.currentParameters = nextParameters;
 
-    if (targetSystem === 'hypercube' && this.hypercubeSystem) {
-      this.applyParametersToSystem(this.hypercubeSystem, nextParameters);
+    let effectiveParameters = nextParameters;
+    if (this.parameterMappingSystem) {
+      this.parameterMappingSystem.setBaseParameters(this.currentParameters);
+      effectiveParameters = this.parameterMappingSystem.getEffectiveParameters();
     } else {
-      this.engineCoordinator.applyParameters(nextParameters, targetSystem);
+      effectiveParameters = { ...nextParameters };
     }
+
+    this.currentEffectiveParameters = { ...effectiveParameters };
+    this.applyEffectiveParameters(targetSystem, effectiveParameters);
 
     if (!suppressDispatch) {
       this.stateSyncInProgress = true;
@@ -310,6 +325,44 @@ export class VisualizerEngine {
 
     system.updateParameters?.(params);
     system.setParameters?.(params);
+  }
+
+  applyEffectiveParameters(targetSystem = this.currentSystem, effectiveParameters = this.currentEffectiveParameters) {
+    if (!effectiveParameters) {
+      return;
+    }
+
+    if (targetSystem === 'hypercube' && this.hypercubeSystem) {
+      this.applyParametersToSystem(this.hypercubeSystem, effectiveParameters);
+      return;
+    }
+
+    this.engineCoordinator.applyParameters(effectiveParameters, targetSystem);
+  }
+
+  pushEffectiveParameters(targetSystem = this.currentSystem) {
+    const effective = this.parameterMappingSystem
+      ? this.parameterMappingSystem.getEffectiveParameters()
+      : { ...this.currentParameters };
+
+    this.currentEffectiveParameters = { ...effective };
+    this.applyEffectiveParameters(targetSystem, effective);
+  }
+
+  handleInteractiveParameterUpdate(param, value) {
+    if (!param) {
+      return;
+    }
+
+    let resolvedValue = value;
+    if (typeof resolvedValue === 'string') {
+      const numeric = Number(resolvedValue);
+      if (!Number.isNaN(numeric)) {
+        resolvedValue = numeric;
+      }
+    }
+
+    this.applyParameters({ [param]: resolvedValue });
   }
 
   getEngine(systemName = this.currentSystem) {
@@ -384,6 +437,9 @@ export class VisualizerEngine {
         type: 'audio/updateReactive',
         payload: reactivePayload,
       });
+      if (this.parameterMappingSystem?.setAudioState(reactivePayload)) {
+        this.pushEffectiveParameters();
+      }
     }
 
     const analysisPayload = {};
