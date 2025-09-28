@@ -18,7 +18,11 @@ const createLocalStorage = () => {
   };
 };
 
-global.performance = global.performance || { now: () => Date.now() };
+const testNow = { value: Date.now() };
+global.performance = { now: () => testNow.value };
+global.__setTestNow = (nextNow) => {
+  testNow.value = Number.isFinite(nextNow) ? nextNow : testNow.value;
+};
 
 global.window = {
   devicePixelRatio: 1,
@@ -27,6 +31,7 @@ global.window = {
   addEventListener() {},
   removeEventListener() {},
   localStorage: createLocalStorage(),
+  performance: global.performance,
 };
 
 global.document = {
@@ -59,6 +64,7 @@ globalThis.navigator = { userAgent: 'node' };
 
 const { StateManager } = await import('../src/core/StateManager.js');
 const { EngineCoordinator } = await import('../src/core/EngineCoordinator.js');
+const { ParameterMappingSystem } = await import('../src/core/ParameterMappingSystem.js');
 
 const tests = [];
 
@@ -337,6 +343,76 @@ test('EngineCoordinator orchestrates engine lifecycle', async () => {
 
   coordinator.destroy();
   assert(resourceManager.released.length > 0, 'Shared resources should be released on destroy');
+});
+
+test('ParameterMappingSystem fuses audio and interaction data into effective parameters', () => {
+  const now = Date.now();
+  global.__setTestNow(now);
+
+  const baseParameters = {
+    geometry: 2,
+    gridDensity: 20,
+    morphFactor: 0.5,
+    chaos: 0.3,
+    speed: 1.2,
+    hue: 180,
+    intensity: 0.6,
+    saturation: 0.8,
+    dimension: 3.5,
+    rot4dZW: 0.1,
+  };
+
+  const mapper = new ParameterMappingSystem(baseParameters);
+
+  mapper.setInteractionState({
+    mouseMovement: {
+      normalizedX: 0.7,
+      normalizedY: 0.25,
+      velocity: 0.9,
+      lastTimestamp: now,
+    },
+    scroll: {
+      lastDelta: 0.6,
+      lastTimestamp: now,
+    },
+    clickHold: {
+      lastIntensity: 0.5,
+      lastTimestamp: now,
+    },
+    meta: {
+      lastInteractionTimestamp: now,
+    },
+  });
+
+  mapper.setAudioState({
+    bass: 0.5,
+    mid: 0.4,
+    high: 0.3,
+    energy: 0.6,
+  });
+
+  const effective = mapper.getEffectiveParameters();
+
+  const within = (actual, expected, epsilon = 1e-6) => Math.abs(actual - expected) <= epsilon;
+
+  assert(within(effective.gridDensity, 35), 'Bass should raise grid density according to mapping');
+  assert(within(effective.morphFactor, 0.78), 'Mid frequencies should increase morph factor');
+  assert(within(effective.speed, 1.392), 'Energy should scale speed multiplicatively');
+  assert(within(effective.chaos, 0.3), 'Idle decay should preserve chaos when interaction is fresh');
+  assert(within(effective.hue, 204), 'Mouse X should shift hue symmetrically');
+  assert(within(effective.saturation, 0.84), 'Mouse Y should modulate saturation');
+  assert(within(effective.dimension, 3.56), 'Scroll intensity should adjust dimension within bounds');
+  assert(within(effective.rot4dZW, 0.7), 'Click intensity should steer 4D rotation');
+  assert(within(effective.intensity, 0.72), 'High frequencies should brighten intensity');
+
+  assert(within(effective.audioBass, 0.5), 'Audio bass should be exposed for downstream consumers');
+  assert(within(effective.audioMid, 0.4), 'Audio mid should be exposed for downstream consumers');
+  assert(within(effective.audioHigh, 0.3), 'Audio high should be exposed for downstream consumers');
+  assert(within(effective.audioEnergy, 0.6), 'Audio energy should be exposed for downstream consumers');
+
+  const baseSnapshot = mapper.getBaseParameters();
+  assert(within(baseSnapshot.gridDensity, 20), 'Base grid density should remain unchanged');
+  assert(within(baseSnapshot.morphFactor, 0.5), 'Base morph factor should remain unchanged');
 });
 
 async function run() {
