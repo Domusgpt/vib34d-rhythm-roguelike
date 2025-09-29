@@ -3,13 +3,25 @@
  * Handles 3 categories of reactivity that can work on any system
  */
 
+const PERF = typeof performance !== 'undefined' && performance && typeof performance.now === 'function'
+    ? performance
+    : { now: () => Date.now() };
+
 export class ReactivityManager {
-    constructor() {
+    constructor(options = {}) {
         console.log('⚡ Initializing Modular Reactivity Manager');
-        
+
+        const {
+            onParameterUpdate = null,
+            onInteractionStateChange = null,
+        } = typeof options === 'object' && options !== null ? options : {};
+
+        this.onParameterUpdate = typeof onParameterUpdate === 'function' ? onParameterUpdate : null;
+        this.onInteractionStateChange = typeof onInteractionStateChange === 'function' ? onInteractionStateChange : null;
+
         // Global reactivity state
         this.enabled = true; // Master toggle (controlled by existing global toggle)
-        
+
         // Individual category toggles
         this.mouseEnabled = true;
         this.clickEnabled = true;
@@ -26,15 +38,79 @@ export class ReactivityManager {
         
         // Current selected modes (default to system-appropriate)
         this.currentMouseMode = 'rotations';   // Start with Faceted default
-        this.currentClickMode = 'ripple';      // Start with Faceted default (SWAPPED: now uses ripple for geometry changes)  
+        this.currentClickMode = 'ripple';      // Start with Faceted default (SWAPPED: now uses ripple for geometry changes)
         this.currentScrollMode = 'cycle';      // Start with Faceted default
-        
+
         // Initialize modes after constructor completes
         setTimeout(() => this.initializeModes(), 0);
-        
+
+        this.interactionState = this.createDefaultInteractionState();
+        this.lastMouseSample = {
+            x: 0.5,
+            y: 0.5,
+            timestamp: PERF.now(),
+        };
+
         this.setupGlobalListeners();
+        // Emit an initial snapshot so downstream systems have baseline interaction data
+        setTimeout(() => this.emitInteractionState(), 0);
     }
-    
+
+    /**
+     * Create a fresh interaction snapshot used for parameter mapping
+     */
+    createDefaultInteractionState() {
+        const now = PERF.now();
+        return {
+            mouseMovement: {
+                normalizedX: 0.5,
+                normalizedY: 0.5,
+                velocity: 0,
+                lastTimestamp: now,
+            },
+            scroll: {
+                lastDelta: 0,
+                lastTimestamp: 0,
+            },
+            clickHold: {
+                lastIntensity: 0,
+                lastTimestamp: 0,
+            },
+            pattern: {
+                type: 'none',
+            },
+            meta: {
+                lastInteractionTimestamp: now,
+            },
+        };
+    }
+
+    /**
+     * Emit the current interaction snapshot to listeners
+     */
+    emitInteractionState() {
+        if (!this.onInteractionStateChange) {
+            return;
+        }
+
+        try {
+            const snapshot = JSON.parse(JSON.stringify(this.interactionState));
+            this.onInteractionStateChange(snapshot);
+        } catch (error) {
+            console.warn('⚡ ReactivityManager failed to emit interaction state', error);
+        }
+    }
+
+    /**
+     * Record an interaction timestamp for idle tracking
+     */
+    recordInteraction(timestamp = PERF.now()) {
+        if (!this.interactionState.meta) {
+            this.interactionState.meta = {};
+        }
+        this.interactionState.meta.lastInteractionTimestamp = timestamp;
+    }
+
     /**
      * Initialize mode instances after class definitions are loaded
      */
@@ -130,15 +206,33 @@ export class ReactivityManager {
      */
     handleGlobalMouseMove(e) {
         if (!this.enabled || !this.mouseEnabled || !this.isCanvasEvent(e)) return;
-        
+
         const coords = this.getEventCoords(e);
         if (!coords) return;
-        
+
+        const now = PERF.now();
+        const lastSample = this.lastMouseSample || { x: coords.x, y: coords.y, timestamp: now };
+        const deltaTime = Math.max(16, now - lastSample.timestamp);
+        const deltaX = coords.x - lastSample.x;
+        const deltaY = coords.y - lastSample.y;
+        const velocity = Math.min(1, Math.sqrt(deltaX * deltaX + deltaY * deltaY) / Math.max(0.0001, deltaTime / 16));
+
+        this.interactionState.mouseMovement = {
+            normalizedX: coords.x,
+            normalizedY: coords.y,
+            velocity,
+            lastTimestamp: now,
+        };
+        this.lastMouseSample = { x: coords.x, y: coords.y, timestamp: now };
+        this.recordInteraction(now);
+
         // Route to current mouse mode (check if modes are initialized)
         const mode = this.mouseModes && this.mouseModes[this.currentMouseMode];
         if (mode && mode.handleMouseMove) {
             mode.handleMouseMove(coords.x, coords.y, this.updateParameter.bind(this));
         }
+
+        this.emitInteractionState();
     }
     
     /**
@@ -146,15 +240,25 @@ export class ReactivityManager {
      */
     handleGlobalClick(e) {
         if (!this.enabled || !this.clickEnabled || !this.isCanvasEvent(e)) return;
-        
+
         const coords = this.getEventCoords(e);
         if (!coords) return;
-        
+
+        const now = PERF.now();
+        const clickState = this.interactionState.clickHold || (this.interactionState.clickHold = {});
+        clickState.lastIntensity = Math.min(1, (clickState.lastIntensity ?? 0) + 1);
+        clickState.lastTimestamp = now;
+        this.interactionState.pattern = this.interactionState.pattern || {};
+        this.interactionState.pattern.type = 'click';
+        this.recordInteraction(now);
+
         // Route to current click mode (check if modes are initialized)
         const mode = this.clickModes && this.clickModes[this.currentClickMode];
         if (mode && mode.handleClick) {
             mode.handleClick(coords.x, coords.y, this.updateParameter.bind(this));
         }
+
+        this.emitInteractionState();
     }
     
     /**
@@ -162,14 +266,23 @@ export class ReactivityManager {
      */
     handleGlobalWheel(e) {
         if (!this.enabled || !this.scrollEnabled || !this.isCanvasEvent(e)) return;
-        
+
         e.preventDefault();
-        
+
+        const now = PERF.now();
+        const scrollState = this.interactionState.scroll || (this.interactionState.scroll = {});
+        const normalizedDelta = Math.min(1, Math.abs(e.deltaY) / 480);
+        scrollState.lastDelta = normalizedDelta;
+        scrollState.lastTimestamp = now;
+        this.recordInteraction(now);
+
         // Route to current scroll mode (check if modes are initialized)
         const mode = this.scrollModes && this.scrollModes[this.currentScrollMode];
         if (mode && mode.handleWheel) {
             mode.handleWheel(e.deltaY, this.updateParameter.bind(this));
         }
+
+        this.emitInteractionState();
     }
     
     /**
@@ -199,21 +312,39 @@ export class ReactivityManager {
      */
     handleGlobalTouchMove(e) {
         if (!this.enabled || !this.mouseEnabled || !this.isCanvasEvent(e)) return;
-        
+
         e.preventDefault();
         if (e.touches.length > 0) {
             const touch = e.touches[0];
             const rect = e.target.getBoundingClientRect();
             const x = (touch.clientX - rect.left) / rect.width;
             const y = (touch.clientY - rect.top) / rect.height;
-            
+
+            const now = PERF.now();
+            const lastSample = this.lastMouseSample || { x, y, timestamp: now };
+            const deltaTime = Math.max(16, now - lastSample.timestamp);
+            const deltaX = x - lastSample.x;
+            const deltaY = y - lastSample.y;
+            const velocity = Math.min(1, Math.sqrt(deltaX * deltaX + deltaY * deltaY) / Math.max(0.0001, deltaTime / 16));
+
+            this.interactionState.mouseMovement = {
+                normalizedX: x,
+                normalizedY: y,
+                velocity,
+                lastTimestamp: now,
+            };
+            this.lastMouseSample = { x, y, timestamp: now };
+            this.recordInteraction(now);
+
             const mode = this.mouseModes && this.mouseModes[this.currentMouseMode];
             if (mode && mode.handleMouseMove) {
                 mode.handleMouseMove(x, y, this.updateParameter.bind(this));
             }
+
+            this.emitInteractionState();
         }
     }
-    
+
     handleGlobalTouchEnd(e) {
         if (!this.enabled || !this.clickEnabled || !this.isCanvasEvent(e)) return;
         
@@ -222,11 +353,21 @@ export class ReactivityManager {
             const rect = e.target.getBoundingClientRect();
             const x = (touch.clientX - rect.left) / rect.width;
             const y = (touch.clientY - rect.top) / rect.height;
-            
+
+            const now = PERF.now();
+            const clickState = this.interactionState.clickHold || (this.interactionState.clickHold = {});
+            clickState.lastIntensity = Math.min(1, (clickState.lastIntensity ?? 0) + 1);
+            clickState.lastTimestamp = now;
+            this.interactionState.pattern = this.interactionState.pattern || {};
+            this.interactionState.pattern.type = 'tap';
+            this.recordInteraction(now);
+
             const mode = this.clickModes && this.clickModes[this.currentClickMode];
             if (mode && mode.handleClick) {
                 mode.handleClick(x, y, this.updateParameter.bind(this));
             }
+
+            this.emitInteractionState();
         }
     }
     
@@ -234,14 +375,34 @@ export class ReactivityManager {
      * Update parameter on active system (conflict resolution: active system wins)
      */
     updateParameter(param, value) {
-        // Active system takes control - simple conflict resolution
-        if (window.updateParameter) {
-            window.updateParameter(param, value);
+        if (!param) {
+            return;
         }
-        
-        console.log(`⚡ ${this.activeSystemName} reactivity: ${param} = ${value}`);
+
+        this.recordInteraction(PERF.now());
+
+        let resolvedValue = value;
+        if (typeof resolvedValue === 'string') {
+            const numeric = Number(resolvedValue);
+            if (!Number.isNaN(numeric)) {
+                resolvedValue = numeric;
+            }
+        }
+
+        if (this.onParameterUpdate) {
+            try {
+                this.onParameterUpdate(param, resolvedValue);
+            } catch (error) {
+                console.warn('⚡ ReactivityManager parameter callback failed', error);
+            }
+        } else if (typeof window !== 'undefined' && window.updateParameter) {
+            window.updateParameter(param, resolvedValue);
+        }
+
+        console.log(`⚡ ${this.activeSystemName} reactivity: ${param} = ${resolvedValue}`);
+        this.emitInteractionState();
     }
-    
+
     /**
      * Toggle methods for UI
      */
@@ -269,6 +430,15 @@ export class ReactivityManager {
             console.log(`⚡ Mouse mode: ${mode}`);
         } else {
             console.error(`❌ Mouse mode '${mode}' not found. Available modes:`, Object.keys(this.mouseModes || {}));
+        }
+    }
+
+    getInteractionState() {
+        try {
+            return JSON.parse(JSON.stringify(this.interactionState));
+        } catch (error) {
+            console.warn('⚡ ReactivityManager failed to clone interaction state', error);
+            return this.interactionState;
         }
     }
     
